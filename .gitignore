@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment / secrets
+.env
+
+# Caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime data (SQLite chat history)
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Onebix Harness</title>
+  <link rel="stylesheet" href="/style.css?v=14" />
+</head>
+<body>
+  <!-- Login gate -->
+  <div id="login" class="login-overlay" hidden>
+    <form id="loginForm" class="login-card">
+      <h1 class="brand">Onebix Harness</h1>
+      <p class="login-sub">เข้าสู่ระบบเพื่อเริ่มแชท</p>
+      <input id="loginUser" type="text" placeholder="ชื่อผู้ใช้" autocomplete="username" />
+      <input id="loginPass" type="password" placeholder="รหัสผ่าน" autocomplete="current-password" />
+      <button id="loginBtn" type="submit">เข้าสู่ระบบ</button>
+      <p id="loginError" class="login-error" hidden></p>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <aside id="sidebar">
+      <button id="newChat">+ แชทใหม่</button>
+      <input id="convSearch" type="search" class="conv-search" placeholder="🔍 ค้นหาแชท…"
+             autocomplete="off" />
+      <ul id="convList"></ul>
+      <div id="userBar">
+        <span id="userName"></span>
+        <button id="logout" title="ออกจากระบบ">ออกจากระบบ</button>
+      </div>
+    </aside>
+
+    <div id="pane">
+      <header>
+        <h1>Onebix Harness</h1>
+      </header>
+
+      <main id="chat"></main>
+
+      <form id="composer">
+        <div id="attachPreview" class="attach-preview"></div>
+        <div class="composer-box">
+          <input id="fileInput" type="file" multiple hidden
+                 accept="image/png,image/jpeg,image/webp,image/gif,.pdf,.txt,.md,.docx" />
+          <textarea id="input" rows="1" placeholder="พิมพ์ข้อความ… (Enter ส่ง, Shift+Enter ขึ้นบรรทัดใหม่)"></textarea>
+          <div class="composer-toolbar">
+            <div class="attach-wrap">
+              <button id="attachBtn" type="button" class="tool-btn" aria-haspopup="true"
+                      aria-expanded="false" aria-label="แนบไฟล์" title="แนบไฟล์ / รูป">📎</button>
+              <div id="attachMenu" class="popover-menu" hidden>
+                <button type="button" class="menu-item" data-accept="image/png,image/jpeg,image/webp,image/gif">🖼️ รูปภาพ</button>
+                <button type="button" class="menu-item" data-accept=".pdf,.txt,.md,.docx">📄 เอกสาร</button>
+              </div>
+            </div>
+            <div class="options-wrap">
+              <button id="optionsBtn" type="button" class="tool-btn" aria-haspopup="true"
+                      aria-expanded="false" aria-label="ตัวเลือก" title="ตัวเลือก">⚙</button>
+              <div id="optionsMenu" class="options-menu" hidden>
+                <label>โมเดล AI
+                  <select id="provider" title="LLM provider"></select>
+                </label>
+                <label>Search backend
+                  <select id="backend" title="Search backend"></select>
+                </label>
+              </div>
+            </div>
+            <label class="pill"><input id="enableSearch" type="checkbox" checked /><span>🔍 Search</span></label>
+            <label class="pill"><input id="deepResearch" type="checkbox" /><span>🔬 Deep research</span></label>
+            <button id="send" type="submit" class="send-btn" aria-label="ส่ง">↑</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete-confirmation modal -->
+  <div id="confirmModal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <p id="confirmTitle" class="modal-title">ลบแชท</p>
+      <p id="confirmText" class="modal-text">ต้องการลบแชทนี้ใช่หรือไม่? การลบมีผลทุกเครื่องและกู้คืนไม่ได้</p>
+      <div class="modal-actions">
+        <button id="confirmCancel" type="button" class="btn-secondary">ยกเลิก</button>
+        <button id="confirmOk" type="button" class="btn-danger">ลบ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=13"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Minimal Searxng config for use as a JSON search backend.
+# Change `secret_key` before any non-local deployment.
+use_default_settings: true
+
+general:
+  instance_name: "harness-searxng"
+
+server:
+  secret_key: "change-this-searxng-secret-key"
+  limiter: false
+  image_proxy: false
+
+search:
+  # Enable the JSON output the harness calls with ?format=json
+  formats:
+    - html
+    - json
+
+redis:
+  url: redis://redis:6379/0
