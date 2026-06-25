@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     # Empty means no one can log in through the web UI (programmatic X-API-Key
     # access still works).
     auth_users: str = ""
+    # Comma-separated usernames seeded as admins on first boot (when the DB user
+    # row is created). After that, roles are managed in the DB / admin panel.
+    admin_users: str = ""
+    # PBKDF2 iteration count for password hashing (DB-backed users).
+    pbkdf2_iterations: int = 200_000
     # Secret used to sign session tokens. Falls back to `api_keys` when unset;
     # set an explicit value in production.
     auth_secret: str | None = None
@@ -107,6 +112,16 @@ class Settings(BaseSettings):
             if user:
                 users[user] = password
         return users
+
+    @property
+    def admin_user_set(self) -> set[str]:
+        """Usernames seeded as admins (from `admin_users`)."""
+        return {u.strip() for u in self.admin_users.split(",") if u.strip()}
+
+    @property
+    def auth_db_path(self) -> str:
+        """SQLite file backing the user + usage tables (shares the chat DB)."""
+        return self.chat_db_path
 
     @property
     def token_secret(self) -> str:

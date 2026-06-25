@@ -7,7 +7,8 @@ and `fetch_url` tools, and yields SSE-friendly event dicts:
     {"type": "tool_call",   "name": "web_search", "arguments": {...}}
     {"type": "tool_result", "name": "web_search", "results": [...]}
     {"type": "tool_result", "name": "fetch_url", "url": "...", "chars": N}
-    {"type": "done",        "content": "<full answer>", "tool_calls": N}
+    {"type": "done",        "content": "<full answer>", "tool_calls": N,
+     "input_tokens": N, "output_tokens": N}
     {"type": "error",       "message": "..."}
 """
 from __future__ import annotations
@@ -106,16 +107,24 @@ async def run_agent(
         convo.insert(0, Message(role="system", content=skill))
     full_text: list[str] = []
     tool_calls_made = 0
+    total_input_tokens = 0
+    total_output_tokens = 0
 
     max_iters = (
         settings.deep_research_iterations if deep_research else settings.max_iterations
     )
+    # Whenever search is available (search enabled, or deep research), force a web
+    # search on the first turn so the model can't skip it and answer from stale
+    # training data. Turn 0 is never the last turn, so this never collides with the
+    # final-turn tool withholding below.
+    force_search = any(t.name == "web_search" for t in tools)
     for i in range(max_iters):
         # On the final permitted turn, withhold tools and nudge the model so it
         # produces an answer from what it already gathered instead of
         # dead-ending on the iteration cap.
         last_turn = i == max_iters - 1
         turn_tools: list[ToolDef] = [] if last_turn else tools
+        force_tool = "web_search" if (i == 0 and force_search) else None
         if last_turn and tool_calls_made:
             convo.append(
                 Message(
@@ -131,7 +140,8 @@ async def run_agent(
         tool_request: ToolUseRequest | None = None
 
         async for event in provider.stream_turn(
-            convo, turn_tools, model=model, max_tokens=max_tokens
+            convo, turn_tools, model=model, max_tokens=max_tokens,
+            force_tool=force_tool,
         ):
             if isinstance(event, TextDelta):
                 full_text.append(event.text)
@@ -139,7 +149,8 @@ async def run_agent(
             elif isinstance(event, ToolUseRequest):
                 tool_request = event
             elif isinstance(event, TurnEnd):
-                pass
+                total_input_tokens += event.input_tokens
+                total_output_tokens += event.output_tokens
 
         if tool_request is None:
             break  # model produced a final answer
@@ -205,4 +216,10 @@ async def run_agent(
                 Message(role="tool", tool_call_id=call.id, content=content)
             )
 
-    yield {"type": "done", "content": "".join(full_text), "tool_calls": tool_calls_made}
+    yield {
+        "type": "done",
+        "content": "".join(full_text),
+        "tool_calls": tool_calls_made,
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+    }

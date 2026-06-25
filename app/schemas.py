@@ -43,10 +43,67 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1)
 
 
+Role = Literal["admin", "user"]
+
+
 class LoginResponse(BaseModel):
     token: str
     username: str
+    role: Role = "user"
     expires_at: int
+
+
+# --- Users (admin management) --------------------------------------------
+
+class UserOut(BaseModel):
+    username: str
+    role: Role
+    disabled: bool
+    created_at: float
+
+
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1)
+    role: Role = "user"
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(..., min_length=1)
+
+
+class RoleUpdate(BaseModel):
+    role: Role
+
+
+class DisabledUpdate(BaseModel):
+    disabled: bool
+
+
+# --- Token usage ----------------------------------------------------------
+
+class UsageTotals(BaseModel):
+    user: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    events: int = 0
+    last_used: float | None = None
+
+
+class UsageEventOut(BaseModel):
+    user: str
+    conversation_id: str | None = None
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    created_at: float
+
+
+class UsageSeriesPoint(BaseModel):
+    day: float
+    input_tokens: int
+    output_tokens: int
 
 
 # --- Chat -----------------------------------------------------------------

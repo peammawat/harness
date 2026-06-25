@@ -98,6 +98,7 @@ class AnthropicProvider(LLMProvider):
         *,
         model: str | None = None,
         max_tokens: int = 16000,
+        force_tool: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         assert self._client is not None, "anthropic provider not configured"
         system, native_msgs = self._to_native(messages)
@@ -113,6 +114,14 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = system
         if tools:
             kwargs["tools"] = self._tools_native(tools)
+            if force_tool:
+                # Require this specific tool this turn. Forced tool_choice is
+                # incompatible with extended thinking, so disable thinking for
+                # the forced turn (it only emits the tool call, no reasoning).
+                # Note: thinking={"type":"disabled"} 400s on Fable 5; this app
+                # runs the Opus family (default_anthropic_model), so it's safe.
+                kwargs["tool_choice"] = {"type": "tool", "name": force_tool}
+                kwargs["thinking"] = {"type": "disabled"}
 
         async with self._client.messages.stream(**kwargs) as stream:
             async for event in stream:
@@ -133,4 +142,9 @@ class AnthropicProvider(LLMProvider):
             # Pass the native content blocks back unchanged next turn.
             raw_blocks = [b.model_dump() for b in final.content]
             yield ToolUseRequest(calls=calls, raw_assistant=raw_blocks)
-        yield TurnEnd(stop_reason=final.stop_reason or "end_turn")
+        usage = getattr(final, "usage", None)
+        yield TurnEnd(
+            stop_reason=final.stop_reason or "end_turn",
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        )

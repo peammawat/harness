@@ -11,11 +11,25 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
-from app.api.routes import auth, chat, conversations, health, search, shared
+from app.api.passwords import hash_password
+from app.api.routes import (
+    admin,
+    auth,
+    chat,
+    conversations,
+    health,
+    search,
+    shared,
+    usage,
+)
 from app.config import get_settings
 from app.llm.registry import LLMRegistry
 from app.search.registry import SearchRegistry
-from app.storage import SqliteConversationStore
+from app.storage import (
+    SqliteConversationStore,
+    SqliteUsageStore,
+    SqliteUserStore,
+)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -32,12 +46,34 @@ async def lifespan(app: FastAPI):
         store = SqliteConversationStore(settings.chat_db_path)
         await store.init()
     app.state.conversation_store = store
+
+    # User + usage stores are always built (DB auth and token accounting work
+    # independently of chat-history persistence). Seed users from AUTH_USERS,
+    # marking ADMIN_USERS as admins; seeding is idempotent (INSERT OR IGNORE).
+    user_store = SqliteUserStore(settings.auth_db_path)
+    await user_store.init()
+    seed = [
+        (
+            username,
+            hash_password(password, iterations=settings.pbkdf2_iterations),
+            "admin" if username in settings.admin_user_set else "user",
+        )
+        for username, password in settings.auth_user_map.items()
+    ]
+    await user_store.seed(seed)
+    app.state.user_store = user_store
+
+    usage_store = SqliteUsageStore(settings.auth_db_path)
+    await usage_store.init()
+    app.state.usage_store = usage_store
     try:
         yield
     finally:
         await client.aclose()
         if store is not None:
             await store.close()
+        await user_store.close()
+        await usage_store.close()
 
 
 def create_app() -> FastAPI:
@@ -78,6 +114,8 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(conversations.router)
     app.include_router(shared.router)
+    app.include_router(admin.router)
+    app.include_router(usage.router)
 
     # Serve the static chat UI at the root (added last so /v1/* and /docs win).
     if WEB_DIR.is_dir():

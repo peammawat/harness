@@ -84,8 +84,10 @@ function renderAttachPreview() {
 // ===================== Auth (session token) =====================
 const TOKEN_KEY = "harness_token";
 const USER_KEY = "harness_user";
+const ROLE_KEY = "harness_role";
 
 const getToken = () => localStorage.getItem(TOKEN_KEY) || "";
+const isAdmin = () => localStorage.getItem(ROLE_KEY) === "admin";
 const authHeader = () => {
   const t = getToken();
   return t ? { Authorization: "Bearer " + t } : {};
@@ -104,11 +106,13 @@ function showApp() {
   $("login").hidden = true;
   $("app").hidden = false;
   $("userName").textContent = localStorage.getItem(USER_KEY) || "";
+  $("adminBtn").hidden = !isAdmin();
 }
 
 function logout(message) {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(ROLE_KEY);
   showLogin(message);
 }
 
@@ -126,6 +130,7 @@ async function login(username, password) {
   const data = await res.json();
   localStorage.setItem(TOKEN_KEY, data.token);
   localStorage.setItem(USER_KEY, data.username);
+  localStorage.setItem(ROLE_KEY, data.role || "user");
 }
 
 // ===================== Chat history store (server-backed) =====================
@@ -769,6 +774,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!$("confirmModal").hidden) closeDeleteModal();
   if (!$("shareModal").hidden) closeShareModal();
+  if (!$("createUserModal").hidden) closeCreateUserModal();
 });
 
 // ----- Share modal wiring -----
@@ -790,7 +796,7 @@ $("shareBtn").addEventListener("click", async () => {
     if (res.status === 401) { logout("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"); return; }
     if (!res.ok) { addMsg("error", "สร้างลิงค์แชร์ไม่สำเร็จ"); return; }
     const data = await res.json();
-    openShareModal(`${location.origin}/?s=${encodeURIComponent(data.token)}`);
+    openShareModal(`${location.origin}/s/${encodeURIComponent(data.token)}`);
   } catch (e) {
     addMsg("error", "สร้างลิงค์แชร์ไม่สำเร็จ: " + e);
   } finally {
@@ -836,6 +842,245 @@ chat.addEventListener("click", (e) => {
     btn.textContent = "Copied";
     setTimeout(() => { btn.textContent = "Copy"; }, 1500);
   });
+});
+
+// ===================== Admin panel =====================
+const fmtTokens = (n) => (n || 0).toLocaleString("en-US");
+const fmtTime = (epoch) =>
+  epoch ? new Date(epoch * 1000).toLocaleString("th-TH") : "—";
+
+function showAdmin() {
+  $("sidebar").hidden = true;
+  $("pane").hidden = true;
+  $("adminView").hidden = false;
+  loadUsers();
+  loadUsage();
+}
+
+function showChat() {
+  $("adminView").hidden = true;
+  $("sidebar").hidden = false;
+  $("pane").hidden = false;
+}
+
+// Wrap a fetch to the admin API; routes 401 → re-login, 403 → back to chat.
+async function adminFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    headers: { "Content-Type": "application/json", ...authHeader(), ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { logout("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"); throw new Error("unauthorized"); }
+  if (res.status === 403) { showChat(); $("adminBtn").hidden = true; throw new Error("forbidden"); }
+  return res;
+}
+
+function adminUserError(msg) {
+  const el = $("adminUserError");
+  if (msg) { el.textContent = msg; el.hidden = false; }
+  else { el.hidden = true; }
+}
+
+function createUserError(msg) {
+  const el = $("createUserError");
+  if (msg) { el.textContent = msg; el.hidden = false; }
+  else { el.hidden = true; }
+}
+
+let allUsers = [];
+
+async function loadUsers() {
+  adminUserError("");
+  try {
+    allUsers = await (await adminFetch("/v1/admin/users")).json();
+  } catch { return; }
+  renderUsers();
+}
+
+function renderUsers() {
+  const q = ($("userSearch").value || "").trim().toLowerCase();
+  const users = q
+    ? allUsers.filter((u) => u.username.toLowerCase().includes(q))
+    : allUsers;
+  const me = localStorage.getItem(USER_KEY) || "";
+  const tbody = $("userRows");
+  tbody.innerHTML = "";
+  if (!users.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="5" class="admin-empty">${q ? "ไม่พบผู้ใช้ที่ค้นหา" : "ยังไม่มีผู้ใช้"}</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const u of users) {
+    const tr = document.createElement("tr");
+    const self = u.username === me;
+    const initial = escapeHtml((u.username[0] || "?").toUpperCase());
+    tr.innerHTML = `
+      <td>
+        <div class="user-cell">
+          <span class="user-avatar">${initial}</span>
+          <span>${escapeHtml(u.username)}${self ? " <em>(คุณ)</em>" : ""}</span>
+        </div>
+      </td>
+      <td><span class="badge badge-${u.role === "admin" ? "admin" : "user"}">${u.role}</span></td>
+      <td><span class="badge ${u.disabled ? "badge-off" : "badge-on"}">${u.disabled ? "ปิดใช้งาน" : "ใช้งาน"}</span></td>
+      <td>${fmtTime(u.created_at)}</td>
+      <td class="admin-actions"></td>`;
+    const actions = tr.querySelector(".admin-actions");
+
+    const pwBtn = document.createElement("button");
+    pwBtn.textContent = "🔑 รหัสผ่าน";
+    pwBtn.onclick = () => resetPassword(u.username);
+    actions.appendChild(pwBtn);
+
+    const roleBtn = document.createElement("button");
+    roleBtn.textContent = u.role === "admin" ? "↓ เป็น user" : "↑ เป็น admin";
+    roleBtn.disabled = self;
+    roleBtn.onclick = () => setUserRole(u.username, u.role === "admin" ? "user" : "admin");
+    actions.appendChild(roleBtn);
+
+    const disBtn = document.createElement("button");
+    disBtn.textContent = u.disabled ? "เปิดใช้งาน" : "ปิดใช้งาน";
+    disBtn.disabled = self;
+    disBtn.onclick = () => setUserDisabled(u.username, !u.disabled);
+    actions.appendChild(disBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.textContent = "🗑 ลบ";
+    delBtn.className = "btn-danger";
+    delBtn.disabled = self;
+    delBtn.onclick = () => deleteUser(u.username);
+    actions.appendChild(delBtn);
+
+    tbody.appendChild(tr);
+  }
+}
+
+async function adminMutate(url, opts, errPrefix, onError = adminUserError) {
+  try {
+    const res = await adminFetch(url, opts);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      onError(`${errPrefix}: ${detail}`);
+      return false;
+    }
+    adminUserError("");
+    await loadUsers();
+    return true;
+  } catch { return false; }
+}
+
+function resetPassword(username) {
+  const pw = window.prompt(`รหัสผ่านใหม่สำหรับ ${username}:`);
+  if (!pw) return;
+  adminMutate(
+    `/v1/admin/users/${encodeURIComponent(username)}/password`,
+    { method: "POST", body: JSON.stringify({ password: pw }) },
+    "เปลี่ยนรหัสผ่านไม่สำเร็จ"
+  );
+}
+
+function setUserRole(username, role) {
+  adminMutate(
+    `/v1/admin/users/${encodeURIComponent(username)}/role`,
+    { method: "PUT", body: JSON.stringify({ role }) },
+    "เปลี่ยนบทบาทไม่สำเร็จ"
+  );
+}
+
+function setUserDisabled(username, disabled) {
+  adminMutate(
+    `/v1/admin/users/${encodeURIComponent(username)}/disabled`,
+    { method: "PUT", body: JSON.stringify({ disabled }) },
+    "เปลี่ยนสถานะไม่สำเร็จ"
+  );
+}
+
+function deleteUser(username) {
+  if (!window.confirm(`ลบผู้ใช้ ${username}? การลบนี้กู้คืนไม่ได้`)) return;
+  adminMutate(
+    `/v1/admin/users/${encodeURIComponent(username)}`,
+    { method: "DELETE" },
+    "ลบผู้ใช้ไม่สำเร็จ"
+  );
+}
+
+async function loadUsage() {
+  let totals;
+  try {
+    totals = await (await adminFetch("/v1/admin/usage")).json();
+  } catch { return; }
+
+  const tbody = $("usageRows");
+  tbody.innerHTML = "";
+  if (!totals.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="admin-empty">ยังไม่มีการใช้งาน</td></tr>`;
+  }
+  for (const t of totals) {
+    const tr = document.createElement("tr");
+    const initial = escapeHtml((t.user[0] || "?").toUpperCase());
+    tr.innerHTML = `
+      <td>
+        <div class="user-cell">
+          <span class="user-avatar">${initial}</span>
+          <span>${escapeHtml(t.user)}</span>
+        </div>
+      </td>
+      <td class="num">${fmtTokens(t.input_tokens)}</td>
+      <td class="num">${fmtTokens(t.output_tokens)}</td>
+      <td class="num"><strong>${fmtTokens(t.input_tokens + t.output_tokens)}</strong></td>
+      <td class="num">${t.events}</td>
+      <td>${fmtTime(t.last_used)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+$("adminBtn").addEventListener("click", showAdmin);
+$("adminBack").addEventListener("click", showChat);
+$("usageRefresh").addEventListener("click", loadUsage);
+function openCreateUserModal() {
+  $("newUserName").value = "";
+  $("newUserPass").value = "";
+  $("newUserRole").value = "user";
+  createUserError("");
+  $("createUserModal").hidden = false;
+  $("newUserName").focus();
+}
+function closeCreateUserModal() { $("createUserModal").hidden = true; }
+
+$("userSearch").addEventListener("input", () => {
+  $("userSearchClear").hidden = !$("userSearch").value;
+  renderUsers();
+});
+$("userSearchClear").addEventListener("click", () => {
+  const box = $("userSearch");
+  box.value = "";
+  $("userSearchClear").hidden = true;
+  box.focus();
+  renderUsers();
+});
+$("openCreateUser").addEventListener("click", openCreateUserModal);
+$("createUserCancel").addEventListener("click", closeCreateUserModal);
+$("createUserModal").addEventListener("click", (e) => {
+  if (e.target.id === "createUserModal") closeCreateUserModal();
+});
+
+$("createUserForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = $("newUserName").value.trim();
+  const password = $("newUserPass").value;
+  const role = $("newUserRole").value;
+  if (!username || !password) {
+    createUserError("กรุณากรอกชื่อผู้ใช้และรหัสผ่าน");
+    return;
+  }
+  const ok = await adminMutate(
+    "/v1/admin/users",
+    { method: "POST", body: JSON.stringify({ username, password, role }) },
+    "เพิ่มผู้ใช้ไม่สำเร็จ",
+    createUserError
+  );
+  if (ok) closeCreateUserModal();
 });
 
 // ===================== Login wiring =====================
@@ -901,6 +1146,8 @@ async function init() {
   try {
     const res = await fetch("/auth/me", { headers: authHeader() });
     if (!res.ok) { logout(); return; }
+    const me = await res.json();
+    localStorage.setItem(ROLE_KEY, me.role || "user");
   } catch {
     logout();
     return;

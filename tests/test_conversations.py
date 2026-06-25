@@ -129,6 +129,31 @@ def test_share_and_view_without_auth(client):
     assert [m["role"] for m in body["messages"]] == ["user", "assistant"]
 
 
+def test_share_page_has_open_graph_tags(client):
+    cid = _chat(client, ALICE, "shared chat")["conversation_id"]
+    token = client.post(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": ALICE}
+    ).json()["token"]
+
+    # The /s/{token} page is server-rendered HTML carrying OG meta tags so link
+    # previews work on platforms whose crawlers don't run JavaScript.
+    page = client.get(f"/s/{token}")
+    assert page.status_code == 200
+    assert "text/html" in page.headers["content-type"]
+    html = page.text
+    assert '<meta property="og:title" content="shared chat"' in html
+    assert '<meta property="og:description" content="shared chat"' in html
+    assert '<meta property="og:type" content="website"' in html
+    # Real browsers are redirected to the SPA view.
+    assert f"/?s={token}" in html
+
+
+def test_share_page_missing_token_is_404_html(client):
+    page = client.get("/s/does-not-exist")
+    assert page.status_code == 404
+    assert "text/html" in page.headers["content-type"]
+
+
 def test_share_token_is_stable(client):
     cid = _chat(client, ALICE, "stable")["conversation_id"]
     t1 = client.post(

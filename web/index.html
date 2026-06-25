@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onebix Harness</title>
-  <link rel="stylesheet" href="/style.css?v=15" />
+  <link rel="stylesheet" href="/style.css?v=2" />
 </head>
 <body>
   <!-- Login gate -->
@@ -27,6 +27,7 @@
       <ul id="convList"></ul>
       <div id="userBar">
         <span id="userName"></span>
+        <button id="adminBtn" title="แผงผู้ดูแล" hidden>⚙ ผู้ดูแล</button>
         <button id="logout" title="ออกจากระบบ">ออกจากระบบ</button>
       </div>
     </aside>
@@ -77,6 +78,52 @@
         </div>
       </form>
     </div>
+
+    <!-- Admin panel (admins only) -->
+    <div id="adminView" hidden>
+      <header class="admin-header">
+        <button id="adminBack" type="button" class="btn-secondary">← กลับไปแชท</button>
+        <h1>แผงผู้ดูแลระบบ</h1>
+      </header>
+      <div class="admin-body">
+        <section class="admin-section">
+          <div class="admin-section-head">
+            <h2><span class="admin-section-icon">👥</span> ผู้ใช้</h2>
+            <div class="admin-head-actions">
+              <div class="admin-search">
+                <svg class="admin-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
+                </svg>
+                <input id="userSearch" type="text" placeholder="ค้นหาผู้ใช้…" autocomplete="off" />
+                <button id="userSearchClear" type="button" class="admin-search-clear" title="ล้าง" hidden>✕</button>
+              </div>
+              <button id="openCreateUser" type="button" class="admin-add-btn"><span class="admin-add-icon">+</span> เพิ่มผู้ใช้</button>
+            </div>
+          </div>
+          <p id="adminUserError" class="admin-error" hidden></p>
+          <table class="admin-table">
+            <thead>
+              <tr><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>สถานะ</th><th>สร้างเมื่อ</th><th>การจัดการ</th></tr>
+            </thead>
+            <tbody id="userRows"></tbody>
+          </table>
+        </section>
+
+        <section class="admin-section">
+          <div class="admin-section-head">
+            <h2><span class="admin-section-icon">📊</span> การใช้งานโทเคน</h2>
+            <button id="usageRefresh" type="button" class="btn-secondary">รีเฟรช</button>
+          </div>
+          <table class="admin-table">
+            <thead>
+              <tr><th>ผู้ใช้</th><th class="num">Input</th><th class="num">Output</th><th class="num">รวม</th><th class="num">คำขอ</th><th>ใช้ล่าสุด</th></tr>
+            </thead>
+            <tbody id="usageRows"></tbody>
+          </table>
+        </section>
+      </div>
+    </div>
   </div>
 
   <!-- Share-link modal -->
@@ -96,6 +143,41 @@
     </div>
   </div>
 
+  <!-- Create-user modal -->
+  <div id="createUserModal" class="modal-overlay" hidden>
+    <div class="modal-card create-user-card">
+      <div class="modal-head">
+        <span class="modal-head-icon">👤</span>
+        <div>
+          <p class="modal-title">เพิ่มผู้ใช้ใหม่</p>
+          <p class="modal-subtitle">สร้างบัญชีและกำหนดบทบาทการเข้าใช้งาน</p>
+        </div>
+      </div>
+      <form id="createUserForm" class="admin-create-modal">
+        <label class="field">
+          <span class="field-label">ชื่อผู้ใช้</span>
+          <input id="newUserName" type="text" placeholder="เช่น somchai" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span class="field-label">รหัสผ่าน</span>
+          <input id="newUserPass" type="password" placeholder="ตั้งรหัสผ่าน" autocomplete="new-password" />
+        </label>
+        <label class="field">
+          <span class="field-label">บทบาท</span>
+          <select id="newUserRole">
+            <option value="user">ผู้ใช้ทั่วไป (user)</option>
+            <option value="admin">ผู้ดูแลระบบ (admin)</option>
+          </select>
+        </label>
+        <p id="createUserError" class="admin-error" hidden></p>
+        <div class="modal-actions">
+          <button id="createUserCancel" type="button" class="btn-secondary">ยกเลิก</button>
+          <button type="submit" class="btn-primary">เพิ่มผู้ใช้</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Delete-confirmation modal -->
   <div id="confirmModal" class="modal-overlay" hidden>
     <div class="modal-card">
@@ -108,6 +190,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=15"></script>
+  <script src="/app.js?v=2"></script>
 </body>
 </html>

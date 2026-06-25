@@ -6,7 +6,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.auth import authenticate, create_token, verify_token
+from app.api.auth import authenticate, create_token, resolve_token, verify_token
 from app.config import Settings, get_settings
 from app.main import create_app
 
@@ -40,25 +40,29 @@ def test_token_rejects_expired(settings):
     assert verify_token(token, settings) is None
 
 
-def test_token_rejects_unknown_user(settings):
+async def test_resolve_token_rejects_unknown_user(settings):
+    # verify_token only checks signature + expiry now...
     token, _ = create_token("alice", settings)
+    assert verify_token(token, settings) == "alice"
+    # ...resolve_token enforces that the user still exists (config fallback).
     settings.auth_users = "bob:hunter2"  # alice no longer exists
-    assert verify_token(token, settings) is None
+    assert await resolve_token(token, settings) is None
 
 
-def test_authenticate(settings):
-    assert authenticate("alice", "secret", settings) is True
-    assert authenticate("alice", "wrong", settings) is False
-    assert authenticate("nobody", "secret", settings) is False
+async def test_authenticate(settings):
+    assert await authenticate("alice", "secret", settings) is True
+    assert await authenticate("alice", "wrong", settings) is False
+    assert await authenticate("nobody", "secret", settings) is False
 
 
 # --- Routes ----------------------------------------------------------------
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     monkeypatch.setenv("API_KEYS", "sk-test-123")
     monkeypatch.setenv("AUTH_USERS", "alice:secret")
     monkeypatch.setenv("AUTH_SECRET", "route-test-secret")
+    monkeypatch.setenv("CHAT_DB_PATH", str(tmp_path / "chat.db"))
     get_settings.cache_clear()
     app = create_app()
     with TestClient(app) as c:

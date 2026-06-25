@@ -130,6 +130,7 @@ class OpenAIProvider(LLMProvider):
         *,
         model: str | None = None,
         max_tokens: int = 16000,
+        force_tool: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         assert self._client is not None, "openai provider not configured"
         kwargs: dict[str, Any] = {
@@ -137,17 +138,32 @@ class OpenAIProvider(LLMProvider):
             "messages": self._to_native(messages),
             "max_tokens": max_tokens,
             "stream": True,
+            # Ask for a trailing usage-only chunk. Harmless on servers that
+            # ignore it (usage simply stays 0).
+            "stream_options": {"include_usage": True},
         }
         if tools:
             kwargs["tools"] = self._tools_native(tools)
+            if force_tool:
+                # Require this specific tool this turn.
+                kwargs["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": force_tool},
+                }
 
         # Accumulate tool-call fragments by index across stream chunks.
         acc: dict[int, dict[str, Any]] = {}
         text_parts: list[str] = []
         finish_reason = "stop"
+        input_tokens = 0
+        output_tokens = 0
 
         stream = await self._client.chat.completions.create(**kwargs)
         async for chunk in stream:
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+                output_tokens = getattr(usage, "completion_tokens", 0) or 0
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -188,6 +204,14 @@ class OpenAIProvider(LLMProvider):
                 ],
             }
             yield ToolUseRequest(calls=calls, raw_assistant=raw_assistant)
-            yield TurnEnd(stop_reason="tool_calls")
+            yield TurnEnd(
+                stop_reason="tool_calls",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
         else:
-            yield TurnEnd(stop_reason=finish_reason)
+            yield TurnEnd(
+                stop_reason=finish_reason,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )

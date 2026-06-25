@@ -71,6 +71,9 @@ class ToolUseRequest:
 @dataclass
 class TurnEnd:
     stop_reason: str  # "end_turn" | "tool_use" | other
+    # Token usage for this turn (0 when the provider/server doesn't report it).
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 LLMEvent = TextDelta | ToolUseRequest | TurnEnd
@@ -90,7 +93,12 @@ class LLMProvider(ABC):
         *,
         model: str | None = None,
         max_tokens: int = 16000,
+        force_tool: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
-        """Stream one model turn as normalized events."""
+        """Stream one model turn as normalized events.
+
+        When ``force_tool`` is set, the provider must require the model to call
+        that specific tool this turn (provider-native ``tool_choice``).
+        """
         raise NotImplementedError
         yield  # pragma: no cover  (makes this an async generator)

@@ -6,7 +6,9 @@ workers/restarts as long as `token_secret` is stable. Format:
     b64url(json{"u": username, "exp": epoch_seconds}) + "." + b64url(hmac_sha256)
 
 The signature covers the payload segment. `verify_token` re-checks the
-signature, the expiry, and that the user still exists in `auth_user_map`.
+signature and expiry (sync, store-free). `resolve_token` adds the "user still
+exists and is not disabled" check against the DB user store (falling back to
+`auth_user_map` for config-only users).
 """
 from __future__ import annotations
 
@@ -15,8 +17,13 @@ import hashlib
 import hmac
 import json
 import time
+from typing import TYPE_CHECKING
 
+from app.api.passwords import verify_password
 from app.config import Settings
+
+if TYPE_CHECKING:
+    from app.storage.user_store import UserStore
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -33,8 +40,25 @@ def _sign(payload: str, secret: str) -> str:
     return _b64url_encode(digest)
 
 
-def authenticate(username: str, password: str, settings: Settings) -> bool:
-    """Constant-time credential check against the configured user map."""
+async def authenticate(
+    username: str,
+    password: str,
+    settings: Settings,
+    user_store: "UserStore | None" = None,
+) -> bool:
+    """Verify credentials against the DB user store, falling back to config.
+
+    A DB user takes precedence: a disabled account always fails; otherwise the
+    password is checked against the stored PBKDF2 hash. Users that exist only in
+    `auth_users` (no DB row yet) are checked with a constant-time compare.
+    """
+    if user_store is not None:
+        record = await user_store.get(username)
+        if record is not None:
+            if record.disabled:
+                return False
+            return verify_password(password, record.password_hash)
+
     expected = settings.auth_user_map.get(username)
     if expected is None:
         # Still compare to keep timing roughly constant for unknown users.
@@ -54,7 +78,12 @@ def create_token(username: str, settings: Settings) -> tuple[str, int]:
 
 
 def verify_token(token: str, settings: Settings) -> str | None:
-    """Return the username if the token is valid and unexpired, else None."""
+    """Return the username if the signature is valid and unexpired, else None.
+
+    This checks the token itself only (signature + expiry). Whether the user
+    still exists / is enabled is decided by `resolve_token`, which consults the
+    user store.
+    """
     try:
         payload, signature = token.split(".", 1)
     except ValueError:
@@ -71,6 +100,26 @@ def verify_token(token: str, settings: Settings) -> str | None:
         return None
     if expires_at < int(time.time()):
         return None
-    if username not in settings.auth_user_map:
-        return None
     return username
+
+
+async def resolve_token(
+    token: str,
+    settings: Settings,
+    user_store: "UserStore | None" = None,
+) -> str | None:
+    """Validate a token and confirm the user is still active.
+
+    Returns the username if the token is valid AND the user currently exists and
+    is not disabled (checked against the DB user store, with a fallback to
+    config `auth_users` for users that have no DB row).
+    """
+    username = verify_token(token, settings)
+    if username is None:
+        return None
+    if user_store is not None:
+        record = await user_store.get(username)
+        if record is not None:
+            return None if record.disabled else username
+    # No DB row — accept only if the user is still in the config seed.
+    return username if username in settings.auth_user_map else None

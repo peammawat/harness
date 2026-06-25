@@ -136,7 +136,9 @@ class _AlwaysToolProvider(FakeProvider):
 
     name = "always-tool"
 
-    async def stream_turn(self, messages, tools, *, model=None, max_tokens=16000):
+    async def stream_turn(
+        self, messages, tools, *, model=None, max_tokens=16000, force_tool=None
+    ):
         from app.llm.base import ToolCall, ToolUseRequest
 
         if tools:
@@ -175,3 +177,41 @@ async def test_normal_chat_omits_fetch_tool_in_skill():
     # regular search skill, not the deep-research one.
     assert "fetch_url" in provider.tools_seen
     assert provider.system_seen and "Deep Research" not in provider.system_seen[0]
+
+
+@pytest.mark.asyncio
+async def test_search_is_forced_on_first_turn_when_enabled():
+    provider = RecordingProvider()
+    search = FakeSearchRegistry()
+    await _run(
+        provider, search, messages=[Message(role="user", content="any question at all")]
+    )
+    # web_search is forced on the first turn whenever search is available.
+    assert provider.force_tool_seen[0] == "web_search"
+
+
+@pytest.mark.asyncio
+async def test_search_is_forced_in_deep_research():
+    provider = RecordingProvider()
+    search = FakeSearchRegistry()
+    await _run(
+        provider,
+        search,
+        deep_research=True,
+        messages=[Message(role="user", content="research this topic")],
+    )
+    assert provider.force_tool_seen[0] == "web_search"
+
+
+@pytest.mark.asyncio
+async def test_no_force_when_search_disabled():
+    provider = RecordingProvider()
+    search = FakeSearchRegistry()
+    await _run(
+        provider,
+        search,
+        enable_search=False,
+        messages=[Message(role="user", content="latest nvidia product")],
+    )
+    # No web_search tool offered, so nothing to force.
+    assert provider.force_tool_seen[0] is None

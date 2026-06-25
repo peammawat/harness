@@ -16,6 +16,7 @@ from app.api.deps import (
     get_http_client,
     get_llm_registry,
     get_search_registry,
+    get_usage_store,
     require_auth,
 )
 from app.config import Settings, get_settings
@@ -24,6 +25,7 @@ from app.llm.registry import LLMRegistry
 from app.schemas import ChatDocument, ChatRequest, ChatResponse
 from app.search.registry import SearchRegistry
 from app.storage.base import ConversationStore
+from app.storage.usage_store import UsageStore
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_auth)])
 
@@ -42,6 +44,35 @@ async def _resolve_conversation(
         conversation_id = await store.create_conversation(identity, title)
     await store.append_message(identity, conversation_id, last.role, last.content)
     return conversation_id
+
+
+async def _record_usage(
+    usage_store: UsageStore | None,
+    *,
+    identity: str,
+    conversation_id: str | None,
+    provider: str,
+    model: str,
+    event: dict,
+) -> None:
+    """Persist token usage from a `done` event; never raises (best-effort)."""
+    if usage_store is None:
+        return
+    in_tok = int(event.get("input_tokens", 0) or 0)
+    out_tok = int(event.get("output_tokens", 0) or 0)
+    if not in_tok and not out_tok:
+        return
+    try:
+        await usage_store.record(
+            user=identity,
+            conversation_id=conversation_id,
+            provider=provider,
+            model=model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+        )
+    except Exception:  # noqa: BLE001 — usage accounting must never break a chat
+        pass
 
 
 def _document_block(doc: ChatDocument, settings: Settings) -> str:
@@ -86,9 +117,11 @@ async def chat(
     search: SearchRegistry = Depends(get_search_registry),
     http_client: httpx.AsyncClient = Depends(get_http_client),
     store: ConversationStore | None = Depends(get_conversation_store),
+    usage_store: UsageStore | None = Depends(get_usage_store),
     settings: Settings = Depends(get_settings),
 ):
     provider, backend = _resolve(req, llm, settings)
+    model = req.model or ""
 
     conversation_id = None
     if store is not None:
@@ -110,6 +143,7 @@ async def chat(
     if req.stream:
         async def event_source():
             answer = ""
+            done_event: dict | None = None
             try:
                 if conversation_id is not None:
                     yield {
@@ -120,6 +154,7 @@ async def chat(
                 async for event in agent_events:
                     if event["type"] == "done":
                         answer = event["content"]
+                        done_event = event
                     yield {
                         "event": event["type"],
                         "data": json.dumps(event, ensure_ascii=False),
@@ -133,17 +168,28 @@ async def chat(
                 await store.append_message(
                     identity, conversation_id, "assistant", answer
                 )
+            if done_event is not None:
+                await _record_usage(
+                    usage_store,
+                    identity=identity,
+                    conversation_id=conversation_id,
+                    provider=provider.name,
+                    model=model,
+                    event=done_event,
+                )
 
         return EventSourceResponse(event_source())
 
     # Non-streaming: drain the loop and return a single JSON body.
     content = ""
     tool_calls = 0
+    done_event: dict | None = None
     try:
         async for event in agent_events:
             if event["type"] == "done":
                 content = event["content"]
                 tool_calls = event["tool_calls"]
+                done_event = event
             elif event["type"] == "error":
                 raise HTTPException(status_code=502, detail=event["message"])
     except HTTPException:
@@ -152,9 +198,18 @@ async def chat(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if store is not None and conversation_id is not None and content:
         await store.append_message(identity, conversation_id, "assistant", content)
+    if done_event is not None:
+        await _record_usage(
+            usage_store,
+            identity=identity,
+            conversation_id=conversation_id,
+            provider=provider.name,
+            model=model,
+            event=done_event,
+        )
     return ChatResponse(
         provider=provider.name,
-        model=req.model or "",
+        model=model,
         content=content,
         tool_calls=tool_calls,
         conversation_id=conversation_id,

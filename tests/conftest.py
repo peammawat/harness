@@ -45,6 +45,7 @@ class FakeProvider(LLMProvider):
         *,
         model: str | None = None,
         max_tokens: int = 16000,
+        force_tool: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         already_searched = any(m.role == "tool" for m in messages)
         if not already_searched and tools:
@@ -53,10 +54,10 @@ class FakeProvider(LLMProvider):
                 calls=[ToolCall(id="t1", name="web_search", arguments={"query": "x"})],
                 raw_assistant={"role": "assistant", "content": "Let me search."},
             )
-            yield TurnEnd(stop_reason="tool_use")
+            yield TurnEnd(stop_reason="tool_use", input_tokens=10, output_tokens=20)
         else:
             yield TextDelta("Final answer.")
-            yield TurnEnd(stop_reason="end_turn")
+            yield TurnEnd(stop_reason="end_turn", input_tokens=10, output_tokens=20)
 
 
 class FakeFetchProvider(LLMProvider):
@@ -77,6 +78,7 @@ class FakeFetchProvider(LLMProvider):
         *,
         model: str | None = None,
         max_tokens: int = 16000,
+        force_tool: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         already_fetched = any(m.role == "tool" for m in messages)
         if not already_fetched and tools:
@@ -99,6 +101,7 @@ class RecordingProvider(LLMProvider):
     def __init__(self) -> None:
         self.tools_seen: list[str] = []
         self.system_seen: list[str] = []
+        self.force_tool_seen: list[str | None] = []
 
     def is_configured(self) -> bool:
         return True
@@ -110,8 +113,10 @@ class RecordingProvider(LLMProvider):
         *,
         model: str | None = None,
         max_tokens: int = 16000,
+        force_tool: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         self.tools_seen = [t.name for t in tools]
         self.system_seen = [m.content for m in messages if m.role == "system"]
+        self.force_tool_seen.append(force_tool)
         yield TextDelta("ok")
         yield TurnEnd(stop_reason="end_turn")
