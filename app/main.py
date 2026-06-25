@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 
-from app.api.routes import auth, chat, conversations, health, search
+from app.api.routes import auth, chat, conversations, health, search, shared
 from app.config import get_settings
 from app.llm.registry import LLMRegistry
 from app.search.registry import SearchRegistry
@@ -77,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(chat.router)
     app.include_router(conversations.router)
+    app.include_router(shared.router)
 
     # Serve the static chat UI at the root (added last so /v1/* and /docs win).
     if WEB_DIR.is_dir():

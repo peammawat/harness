@@ -52,5 +52,24 @@ class ConversationStore(ABC):
         """Whether `conversation_id` exists and belongs to `user`."""
 
     @abstractmethod
+    async def set_share_token(self, user: str, conversation_id: str) -> str | None:
+        """Enable public sharing and return the token (existing one if already set).
+
+        Returns None if the conversation does not exist or is not owned by `user`.
+        """
+
+    @abstractmethod
+    async def clear_share_token(self, user: str, conversation_id: str) -> bool:
+        """Disable public sharing (revoke the link); return False if not owned."""
+
+    @abstractmethod
+    async def get_shared_conversation(self, token: str) -> ConversationDetail | None:
+        """Return the conversation for a share `token` (no user check), or None.
+
+        Read-only public access — bypasses user isolation by design, but is scoped
+        to the single conversation that token unlocks.
+        """
+
+    @abstractmethod
     async def close(self) -> None:
         """Release any held resources (connections)."""

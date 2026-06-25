@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onebix Harness</title>
-  <link rel="stylesheet" href="/style.css?v=14" />
+  <link rel="stylesheet" href="/style.css?v=15" />
 </head>
 <body>
   <!-- Login gate -->
@@ -34,7 +34,12 @@
     <div id="pane">
       <header>
         <h1>Onebix Harness</h1>
+        <button id="shareBtn" type="button" title="แชร์แชทนี้" hidden>🔗 แชร์</button>
       </header>
+
+      <div id="sharedBanner" class="shared-banner" hidden>
+        👁️ กำลังดูแชทที่แชร์ (อ่านอย่างเดียว)
+      </div>
 
       <main id="chat"></main>
 
@@ -74,6 +79,23 @@
     </div>
   </div>
 
+  <!-- Share-link modal -->
+  <div id="shareModal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <p class="modal-title">แชร์แชท</p>
+      <p class="modal-text">ใครก็ตามที่มีลิงค์นี้สามารถเปิดดูบทสนทนาได้ (อ่านอย่างเดียว ไม่ต้องเข้าสู่ระบบ)</p>
+      <div class="share-link-row">
+        <span class="share-link-icon">🔗</span>
+        <input id="shareLink" class="share-link" type="text" readonly />
+        <button id="shareCopy" type="button" class="copy-btn">คัดลอก</button>
+      </div>
+      <div class="modal-actions">
+        <button id="shareStop" type="button" class="btn-danger">หยุดแชร์</button>
+        <button id="shareClose" type="button" class="btn-secondary">ปิด</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Delete-confirmation modal -->
   <div id="confirmModal" class="modal-overlay" hidden>
     <div class="modal-card">
@@ -86,6 +108,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=13"></script>
+  <script src="/app.js?v=15"></script>
 </body>
 </html>

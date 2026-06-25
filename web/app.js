@@ -148,11 +148,17 @@ async function loadConversations() {
   renderSidebar();
 }
 
+// Show the "share" button only when there's a saved chat to share.
+function updateShareBtn() {
+  $("shareBtn").hidden = !activeId;
+}
+
 function newConversation() {
   activeId = null;
   activeMessages = [];
   renderSidebar();
   renderMessages();
+  updateShareBtn();
   $("input").focus();
 }
 
@@ -172,6 +178,7 @@ async function selectConversation(id) {
   }
   renderSidebar();
   renderMessages();
+  updateShareBtn();
 }
 
 // Delete confirmation modal: the × button opens it; deletion runs only on confirm.
@@ -605,7 +612,7 @@ async function send(text) {
 function handleEvent(type, payload, assistantEl, turn, setAnswer) {
   if (type === "conversation") {
     // Server emits this first; bind a brand-new chat to its assigned id.
-    if (!activeId) activeId = payload.conversation_id;
+    if (!activeId) { activeId = payload.conversation_id; updateShareBtn(); }
   } else if (type === "token") {
     // Re-render the full buffer each token: markdown depends on full context
     // (e.g. an unclosed code fence) so incremental textContent won't work.
@@ -759,7 +766,64 @@ $("confirmModal").addEventListener("click", (e) => {
   if (e.target.id === "confirmModal") closeDeleteModal();   // click backdrop to dismiss
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("confirmModal").hidden) closeDeleteModal();
+  if (e.key !== "Escape") return;
+  if (!$("confirmModal").hidden) closeDeleteModal();
+  if (!$("shareModal").hidden) closeShareModal();
+});
+
+// ----- Share modal wiring -----
+function openShareModal(link) {
+  $("shareLink").value = link;
+  $("shareModal").hidden = false;
+  $("shareLink").select();
+}
+function closeShareModal() { $("shareModal").hidden = true; }
+
+$("shareBtn").addEventListener("click", async () => {
+  if (!activeId) return;
+  $("shareBtn").disabled = true;
+  try {
+    const res = await fetch(
+      "/v1/conversations/" + encodeURIComponent(activeId) + "/share",
+      { method: "POST", headers: authHeader() }
+    );
+    if (res.status === 401) { logout("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"); return; }
+    if (!res.ok) { addMsg("error", "สร้างลิงค์แชร์ไม่สำเร็จ"); return; }
+    const data = await res.json();
+    openShareModal(`${location.origin}/?s=${encodeURIComponent(data.token)}`);
+  } catch (e) {
+    addMsg("error", "สร้างลิงค์แชร์ไม่สำเร็จ: " + e);
+  } finally {
+    $("shareBtn").disabled = false;
+  }
+});
+
+$("shareCopy").addEventListener("click", () => {
+  navigator.clipboard.writeText($("shareLink").value).then(() => {
+    const btn = $("shareCopy");
+    btn.textContent = "✓ แล้ว";
+    setTimeout(() => { btn.textContent = "คัดลอก"; }, 1500);
+  });
+});
+
+$("shareStop").addEventListener("click", async () => {
+  if (!activeId) { closeShareModal(); return; }
+  try {
+    const res = await fetch(
+      "/v1/conversations/" + encodeURIComponent(activeId) + "/share",
+      { method: "DELETE", headers: authHeader() }
+    );
+    if (res.status === 401) { logout("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"); return; }
+  } catch (e) {
+    addMsg("error", "หยุดแชร์ไม่สำเร็จ: " + e);
+    return;
+  }
+  closeShareModal();
+});
+
+$("shareClose").addEventListener("click", closeShareModal);
+$("shareModal").addEventListener("click", (e) => {
+  if (e.target.id === "shareModal") closeShareModal();
 });
 
 // Copy-to-clipboard for code blocks (delegated: assistant messages re-render on stream).
@@ -801,7 +865,37 @@ async function startApp() {
   else { newConversation(); }
 }
 
+// Public read-only view: load a shared conversation by token, no login needed.
+async function enterSharedMode(token) {
+  // Show the app shell but strip everything used to converse or navigate.
+  $("login").hidden = true;
+  $("app").hidden = false;
+  $("sidebar").hidden = true;
+  $("composer").hidden = true;
+  $("shareBtn").hidden = true;
+  $("sharedBanner").hidden = false;
+
+  try {
+    const res = await fetch("/shared/" + encodeURIComponent(token));
+    if (!res.ok) {
+      chat.innerHTML = "";
+      addMsg("error", "ลิงค์นี้ใช้ไม่ได้แล้ว");
+      return;
+    }
+    const conv = await res.json();
+    activeMessages = conv.messages || [];
+    document.title = (conv.title || "แชทที่แชร์") + " · Onebix Harness";
+    renderMessages();
+  } catch (e) {
+    chat.innerHTML = "";
+    addMsg("error", "โหลดแชทที่แชร์ไม่สำเร็จ: " + e);
+  }
+}
+
 async function init() {
+  const sharedToken = new URLSearchParams(location.search).get("s");
+  if (sharedToken) { await enterSharedMode(sharedToken); return; }
+
   if (!getToken()) { showLogin(); return; }
   // Validate the stored token before showing the app.
   try {

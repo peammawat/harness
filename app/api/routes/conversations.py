@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_conversation_store, require_auth
-from app.schemas import ConversationDetail, ConversationSummary
+from app.schemas import ConversationDetail, ConversationSummary, ShareResponse
 from app.storage.base import ConversationStore
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_auth)])
@@ -43,4 +43,26 @@ async def delete_conversation(
     store: ConversationStore | None = Depends(get_conversation_store),
 ) -> None:
     if not await _require_store(store).delete_conversation(identity, conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
+
+@router.post("/conversations/{conversation_id}/share", response_model=ShareResponse)
+async def share_conversation(
+    conversation_id: str,
+    identity: str = Depends(require_auth),
+    store: ConversationStore | None = Depends(get_conversation_store),
+) -> ShareResponse:
+    token = await _require_store(store).set_share_token(identity, conversation_id)
+    if token is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    return ShareResponse(token=token)
+
+
+@router.delete("/conversations/{conversation_id}/share", status_code=204)
+async def unshare_conversation(
+    conversation_id: str,
+    identity: str = Depends(require_auth),
+    store: ConversationStore | None = Depends(get_conversation_store),
+) -> None:
+    if not await _require_store(store).clear_share_token(identity, conversation_id):
         raise HTTPException(status_code=404, detail="Conversation not found.")

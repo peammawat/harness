@@ -655,3 +655,80 @@ main::-webkit-scrollbar,
   color: #fff;
   border: none;
 }
+/* Share button in the header — filled accent pill */
+#shareBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 999px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.05s;
+}
+#shareBtn:hover { filter: brightness(1.08); }
+#shareBtn:active { transform: translateY(1px); }
+#shareBtn:disabled { opacity: 0.5; cursor: default; filter: none; }
+
+/* Share modal: a touch wider so long links fit comfortably */
+#shareModal .modal-card { max-width: 460px; }
+
+/* Link field + attached copy button (input group) */
+.share-link-row {
+  display: flex;
+  align-items: stretch;
+  margin-top: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.share-link-row:focus-within { border-color: var(--accent); }
+.share-link-icon {
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  font-size: 14px;
+  opacity: 0.7;
+}
+.share-link {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.share-link:focus { outline: none; }
+.copy-btn {
+  flex-shrink: 0;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.copy-btn:hover { filter: brightness(1.08); }
+.copy-btn:active { filter: brightness(0.95); }
+
+.modal-actions .btn-danger { margin-right: auto; }
+
+/* Banner shown when viewing a shared chat (read-only) */
+.shared-banner {
+  padding: 8px 16px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}

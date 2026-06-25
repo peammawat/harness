@@ -110,6 +110,62 @@ def test_history_endpoints_require_auth(client):
     assert client.get("/v1/conversations").status_code == 401
 
 
+def test_share_and_view_without_auth(client):
+    cid = _chat(client, ALICE, "shared chat")["conversation_id"]
+
+    res = client.post(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": ALICE}
+    )
+    assert res.status_code == 200, res.text
+    token = res.json()["token"]
+    assert token
+
+    # The public endpoint needs no credentials and returns the messages.
+    shared = client.get(f"/shared/{token}")
+    assert shared.status_code == 200
+    body = shared.json()
+    assert body["id"] == cid
+    assert body["title"] == "shared chat"
+    assert [m["role"] for m in body["messages"]] == ["user", "assistant"]
+
+
+def test_share_token_is_stable(client):
+    cid = _chat(client, ALICE, "stable")["conversation_id"]
+    t1 = client.post(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": ALICE}
+    ).json()["token"]
+    t2 = client.post(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": ALICE}
+    ).json()["token"]
+    assert t1 == t2
+
+
+def test_revoke_share(client):
+    cid = _chat(client, ALICE, "to revoke")["conversation_id"]
+    token = client.post(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": ALICE}
+    ).json()["token"]
+    assert client.get(f"/shared/{token}").status_code == 200
+
+    res = client.delete(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": ALICE}
+    )
+    assert res.status_code == 204
+    assert client.get(f"/shared/{token}").status_code == 404
+
+
+def test_share_requires_ownership(client):
+    cid = _chat(client, ALICE, "alice only")["conversation_id"]
+    res = client.post(
+        f"/v1/conversations/{cid}/share", headers={"X-API-Key": BOB}
+    )
+    assert res.status_code == 404
+
+
+def test_view_unknown_share_token(client):
+    assert client.get("/shared/nope-not-real").status_code == 404
+
+
 @pytest.fixture
 def disabled_client(monkeypatch, tmp_path):
     monkeypatch.setenv("API_KEYS", ALICE)

@@ -11,6 +11,7 @@ different `ConversationStore` implementation (Redis/Postgres).
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 import uuid
 from pathlib import Path
@@ -63,6 +64,18 @@ class SqliteConversationStore(ConversationStore):
         await self._db.execute(
             "CREATE INDEX IF NOT EXISTS idx_messages_conversation "
             "ON messages (conversation_id)"
+        )
+        # Migration: add share_token to pre-existing DBs (CREATE TABLE IF NOT
+        # EXISTS won't add columns to a table that already exists).
+        cur = await self._db.execute("PRAGMA table_info(conversations)")
+        columns = {row["name"] for row in await cur.fetchall()}
+        if "share_token" not in columns:
+            await self._db.execute(
+                "ALTER TABLE conversations ADD COLUMN share_token TEXT"
+            )
+        await self._db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_share "
+            "ON conversations (share_token)"
         )
         await self._db.commit()
 
@@ -188,6 +201,72 @@ class SqliteConversationStore(ConversationStore):
                 (conversation_id, user),
             )
             return await cur.fetchone() is not None
+
+    async def set_share_token(self, user: str, conversation_id: str) -> str | None:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "SELECT share_token FROM conversations WHERE id = ? AND user = ?",
+                (conversation_id, user),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            if row["share_token"]:
+                return row["share_token"]
+            token = secrets.token_urlsafe(24)
+            await db.execute(
+                "UPDATE conversations SET share_token = ? WHERE id = ? AND user = ?",
+                (token, conversation_id, user),
+            )
+            await db.commit()
+        return token
+
+    async def clear_share_token(self, user: str, conversation_id: str) -> bool:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "UPDATE conversations SET share_token = NULL "
+                "WHERE id = ? AND user = ?",
+                (conversation_id, user),
+            )
+            if cur.rowcount == 0:
+                await db.rollback()
+                return False
+            await db.commit()
+        return True
+
+    async def get_shared_conversation(
+        self, token: str
+    ) -> ConversationDetail | None:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "SELECT id, title, created_at, updated_at FROM conversations "
+                "WHERE share_token = ?",
+                (token,),
+            )
+            conv = await cur.fetchone()
+            if conv is None:
+                return None
+            cur = await db.execute(
+                "SELECT role, content, created_at FROM messages "
+                "WHERE conversation_id = ? ORDER BY id ASC",
+                (conv["id"],),
+            )
+            msg_rows = await cur.fetchall()
+        return ConversationDetail(
+            id=conv["id"],
+            title=conv["title"],
+            created_at=conv["created_at"],
+            updated_at=conv["updated_at"],
+            messages=[
+                StoredMessage(
+                    role=m["role"], content=m["content"], created_at=m["created_at"]
+                )
+                for m in msg_rows
+            ],
+        )
 
     async def close(self) -> None:
         if self._db is not None:

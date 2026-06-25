@@ -117,3 +117,7 @@ class ConversationDetail(BaseModel):
     created_at: float
     updated_at: float
     messages: list[StoredMessage]
+
+
+class ShareResponse(BaseModel):
+    token: str
