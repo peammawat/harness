@@ -20,8 +20,10 @@ from app.api.deps import (
     get_search_registry,
     get_settings_store,
     get_usage_store,
+    get_user_store,
     require_auth,
 )
+from app.api.quota import enforce_quota
 from app.config import Settings, get_settings
 from app.llm.base import ImagePart, Message
 from app.llm.registry import LLMRegistry
@@ -30,6 +32,7 @@ from app.search.registry import SearchRegistry
 from app.storage.base import ConversationStore
 from app.storage.settings_store import SettingsStore
 from app.storage.usage_store import UsageStore
+from app.storage.user_store import UserStore
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_auth)])
 
@@ -125,9 +128,12 @@ async def chat(
     store: ConversationStore | None = Depends(get_conversation_store),
     usage_store: UsageStore | None = Depends(get_usage_store),
     settings_store: SettingsStore | None = Depends(get_settings_store),
+    user_store: UserStore | None = Depends(get_user_store),
     settings: Settings = Depends(get_settings),
 ):
     identity = auth.username
+    # Reject before any LLM/search call if the caller is already over quota.
+    await enforce_quota(usage_store, user_store, settings_store, settings, identity)
     # The active LLM provider is admin-controlled: non-admins are forced onto the
     # global provider; only admins may override it per-request via `req.provider`.
     global_provider = settings.default_llm_provider

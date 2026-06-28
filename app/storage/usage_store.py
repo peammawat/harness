@@ -45,12 +45,20 @@ class UsageStore(ABC):
         """Totals for a single user (zeros if none)."""
 
     @abstractmethod
+    async def usage_since(self, user: str, since: float) -> int:
+        """Total tokens (input + output) for `user` since `since` (epoch seconds)."""
+
+    @abstractmethod
     async def series(self, user: str, since: float) -> list[UsageSeriesPoint]:
         """Daily-bucketed totals for `user` from `since` (epoch seconds)."""
 
     @abstractmethod
     async def recent(self, user: str | None, limit: int) -> list[UsageEventOut]:
         """Most recent events, optionally filtered to one user."""
+
+    @abstractmethod
+    async def rename_user(self, old: str, new: str) -> None:
+        """Re-key all of `old`'s usage events to `new` (username rename)."""
 
     @abstractmethod
     async def close(self) -> None: ...
@@ -170,6 +178,17 @@ class SqliteUsageStore(UsageStore):
             last_used=r["last_used"] if r else None,
         )
 
+    async def usage_since(self, user: str, since: float) -> int:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) AS total "
+                "FROM usage_events WHERE user = ? AND created_at >= ?",
+                (user, since),
+            )
+            row = await cur.fetchone()
+        return int(row["total"]) if row else 0
+
     async def series(self, user: str, since: float) -> list[UsageSeriesPoint]:
         async with self._lock:
             db = self._conn()
@@ -222,6 +241,14 @@ class SqliteUsageStore(UsageStore):
             )
             for r in rows
         ]
+
+    async def rename_user(self, old: str, new: str) -> None:
+        async with self._lock:
+            db = self._conn()
+            await db.execute(
+                "UPDATE usage_events SET user = ? WHERE user = ?", (new, old)
+            )
+            await db.commit()
 
     async def close(self) -> None:
         if self._db is not None:

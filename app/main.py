@@ -18,6 +18,7 @@ from app.api.routes import (
     chat,
     conversations,
     health,
+    me,
     search,
     shared,
     usage,
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(shared.router)
     app.include_router(admin.router)
     app.include_router(usage.router)
+    app.include_router(me.router)
 
     # Serve the static chat UI at the root (added last so /v1/* and /docs win).
     if WEB_DIR.is_dir():

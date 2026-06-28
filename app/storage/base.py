@@ -71,5 +71,9 @@ class ConversationStore(ABC):
         """
 
     @abstractmethod
+    async def rename_user(self, old: str, new: str) -> None:
+        """Re-key all of `old`'s conversations to `new` (username rename)."""
+
+    @abstractmethod
     async def close(self) -> None:
         """Release any held resources (connections)."""

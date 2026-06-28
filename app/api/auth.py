@@ -98,6 +98,49 @@ def verify_token(token: str, settings: Settings) -> str | None:
     expires_at = data.get("exp")
     if not isinstance(username, str) or not isinstance(expires_at, int):
         return None
+    if data.get("k") is not None:
+        return None  # purpose-scoped token (e.g. pwreset) — not a session token
+    if expires_at < int(time.time()):
+        return None
+    return username
+
+
+def create_reset_token(username: str, settings: Settings) -> tuple[str, int]:
+    """Return (token, expires_at_epoch) for a password-reset link.
+
+    Same HMAC scheme as `create_token` but carries `"k": "pwreset"` and a short
+    TTL, so a session token can never be accepted as a reset token (and vice
+    versa) — see `verify_reset_token`.
+    """
+    expires_at = int(time.time()) + settings.password_reset_ttl_seconds
+    payload = _b64url_encode(
+        json.dumps(
+            {"u": username, "exp": expires_at, "k": "pwreset"},
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    token = f"{payload}.{_sign(payload, settings.token_secret)}"
+    return token, expires_at
+
+
+def verify_reset_token(token: str, settings: Settings) -> str | None:
+    """Return the username for a valid, unexpired reset token, else None."""
+    try:
+        payload, signature = token.split(".", 1)
+    except ValueError:
+        return None
+    if not hmac.compare_digest(signature, _sign(payload, settings.token_secret)):
+        return None
+    try:
+        data = json.loads(_b64url_decode(payload))
+    except (ValueError, json.JSONDecodeError):
+        return None
+    username = data.get("u")
+    expires_at = data.get("exp")
+    if data.get("k") != "pwreset":
+        return None
+    if not isinstance(username, str) or not isinstance(expires_at, int):
+        return None
     if expires_at < int(time.time()):
         return None
     return username

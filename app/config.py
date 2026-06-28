@@ -33,12 +33,33 @@ class Settings(BaseSettings):
     # this only seeds the initial state. Off by default for private deployments.
     registration_enabled: bool = False
 
+    # Email / SMTP — powers the forgot-password reset flow. When unset the feature
+    # is silently skipped (forgot-password still returns a generic success so it
+    # can't be used to probe for accounts). `smtp_configured` gates the sender.
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from: str | None = None  # From: address (defaults to smtp_username)
+    smtp_use_tls: bool = True  # STARTTLS on smtp_port
+    # Public base URL used to build the password-reset link in the email.
+    app_base_url: str = "http://localhost:8000"
+    # Lifetime of a password-reset token (default 1 hour).
+    password_reset_ttl_seconds: int = 3600
+
     # Defaults
     default_llm_provider: str = "anthropic"
     default_search_backend: str = "duckduckgo"
     default_anthropic_model: str = "claude-opus-4-8"
     default_openai_model: str = "gpt-4o"
     max_tokens: int = 16000
+
+    # Token quota — default per-user caps (input + output combined) applied when
+    # a user has no per-user override. `0` = unlimited. Admins change the live
+    # values from the admin panel (persisted in app_settings); these only seed
+    # the initial state. Non-zero so a cap is in effect out of the box.
+    default_daily_token_limit: int = 200_000
+    default_monthly_token_limit: int = 3_000_000
 
     # Agent tool-use loop budget (how many tool round-trips before the model is
     # forced to answer). Deep research gets a larger budget.
@@ -131,6 +152,16 @@ class Settings(BaseSettings):
     def token_secret(self) -> str:
         """Signing secret for session tokens (falls back to `api_keys`)."""
         return self.auth_secret or self.api_keys
+
+    @property
+    def smtp_configured(self) -> bool:
+        """Whether outbound email is configured (host + a From address)."""
+        return bool(self.smtp_host and (self.smtp_from or self.smtp_username))
+
+    @property
+    def smtp_sender(self) -> str | None:
+        """Resolved From: address (explicit `smtp_from`, else the SMTP username)."""
+        return self.smtp_from or self.smtp_username
 
 
 @lru_cache

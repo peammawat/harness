@@ -56,6 +56,58 @@ async def test_list_users(store):
     assert {u.username for u in users} == {"a", "b"}
 
 
+async def test_token_limits_default_and_set(store):
+    await store.create("dave", "h", "user")
+    rec = await store.get("dave")
+    # New users inherit the default (NULL) for both windows.
+    assert rec.daily_token_limit is None
+    assert rec.monthly_token_limit is None
+    # Set an explicit daily cap + unlimited monthly (0).
+    assert await store.set_token_limits("dave", daily=1000, monthly=0) is True
+    rec = await store.get("dave")
+    assert rec.daily_token_limit == 1000
+    assert rec.monthly_token_limit == 0
+    # Clear back to inherit-default (None).
+    await store.set_token_limits("dave", daily=None, monthly=None)
+    rec = await store.get("dave")
+    assert rec.daily_token_limit is None
+    assert rec.monthly_token_limit is None
+    # Setting limits on a missing user returns False.
+    assert await store.set_token_limits("ghost", daily=1, monthly=1) is False
+
+
+async def test_init_migrates_legacy_users_table(tmp_path):
+    import aiosqlite
+
+    # Simulate a pre-existing DB without the token-limit columns.
+    db_path = str(tmp_path / "legacy.db")
+    conn = await aiosqlite.connect(db_path)
+    await conn.execute(
+        "CREATE TABLE users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, "
+        "role TEXT NOT NULL DEFAULT 'user', disabled INTEGER NOT NULL DEFAULT 0, "
+        "created_at REAL NOT NULL)"
+    )
+    await conn.execute(
+        "INSERT INTO users (username, password_hash, role, disabled, created_at) "
+        "VALUES ('legacy', 'h', 'user', 0, 0)"
+    )
+    await conn.commit()
+    await conn.close()
+
+    store = SqliteUserStore(db_path)
+    await store.init()  # additive migration adds the new columns
+    try:
+        rec = await store.get("legacy")
+        assert rec is not None
+        assert rec.daily_token_limit is None
+        assert rec.monthly_token_limit is None
+        assert await store.set_token_limits("legacy", daily=42, monthly=99) is True
+        rec = await store.get("legacy")
+        assert rec.daily_token_limit == 42
+    finally:
+        await store.close()
+
+
 async def test_seed_is_idempotent(store):
     await store.seed([("alice", "seed-hash", "admin")])
     # A later password change...

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onebix Harness</title>
   <link rel="stylesheet" href="/vendor/katex/katex.min.css?v=6" />
-  <link rel="stylesheet" href="/style.css?v=6" />
+  <link rel="stylesheet" href="/style.css?v=7" />
 </head>
 <body>
   <!-- Public landing page (shown to logged-out visitors) -->
@@ -57,6 +57,9 @@
       <input id="loginPass" type="password" placeholder="รหัสผ่าน" autocomplete="current-password" />
       <button id="loginBtn" type="submit">เข้าสู่ระบบ</button>
       <p id="loginError" class="login-error" hidden></p>
+      <p class="login-switch">
+        <button type="button" id="toForgot" class="link-btn">ลืมรหัสผ่าน?</button>
+      </p>
       <p class="login-switch" id="loginSwitch" hidden>
         ยังไม่มีบัญชี? <button type="button" id="toRegister" class="link-btn">สมัครสมาชิก</button>
       </p>
@@ -81,6 +84,33 @@
     </form>
   </div>
 
+  <!-- Forgot-password gate -->
+  <div id="forgot" class="login-overlay" hidden>
+    <form id="forgotForm" class="login-card">
+      <h1 class="brand">ลืมรหัสผ่าน</h1>
+      <p class="login-sub">กรอกอีเมลของบัญชี เราจะส่งลิงก์รีเซ็ตรหัสผ่านไปให้</p>
+      <input id="forgotEmail" type="email" placeholder="อีเมล" autocomplete="email" />
+      <button id="forgotBtn" type="submit">ส่งลิงก์รีเซ็ต</button>
+      <p id="forgotError" class="login-error" hidden></p>
+      <p id="forgotSuccess" class="login-success" hidden></p>
+      <button type="button" id="forgotBack" class="link-btn login-back">← กลับเข้าสู่ระบบ</button>
+    </form>
+  </div>
+
+  <!-- Reset-password gate (shown when the URL carries ?reset=<token>) -->
+  <div id="reset" class="login-overlay" hidden>
+    <form id="resetForm" class="login-card">
+      <h1 class="brand">ตั้งรหัสผ่านใหม่</h1>
+      <p class="login-sub">กรอกรหัสผ่านใหม่สำหรับบัญชีของคุณ</p>
+      <input id="resetPass" type="password" placeholder="รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)" autocomplete="new-password" />
+      <input id="resetPass2" type="password" placeholder="ยืนยันรหัสผ่านใหม่" autocomplete="new-password" />
+      <button id="resetBtn" type="submit">บันทึกรหัสผ่านใหม่</button>
+      <p id="resetError" class="login-error" hidden></p>
+      <p id="resetSuccess" class="login-success" hidden></p>
+      <button type="button" id="resetBack" class="link-btn login-back">← กลับเข้าสู่ระบบ</button>
+    </form>
+  </div>
+
   <div id="app" hidden>
     <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
     <aside id="sidebar">
@@ -90,6 +120,7 @@
       <ul id="convList"></ul>
       <div id="userBar">
         <span id="userName"></span>
+        <button id="settingsBtn" title="ตั้งค่าบัญชี">⚙ ตั้งค่า</button>
         <button id="adminBtn" title="แผงผู้ดูแล" hidden>⚙ ผู้ดูแล</button>
         <button id="logout" title="ออกจากระบบ">ออกจากระบบ</button>
       </div>
@@ -164,6 +195,23 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+          <div class="admin-setting-row">
+            <div class="admin-setting-info">
+              <span class="admin-setting-name">โควต้าโทเคนเริ่มต้น</span>
+              <span class="admin-setting-desc">ลิมิตเริ่มต้นต่อผู้ใช้ (นับ input + output รวมกัน) ใช้กับผู้ใช้ที่ไม่ได้ตั้งค่าเฉพาะตัว — ใส่ 0 = ไม่จำกัด</span>
+            </div>
+            <div class="admin-limit-fields">
+              <label class="field">
+                <span class="field-label">ต่อวัน</span>
+                <input id="defaultDailyLimit" type="number" min="0" step="1" placeholder="0 = ไม่จำกัด" />
+              </label>
+              <label class="field">
+                <span class="field-label">ต่อเดือน</span>
+                <input id="defaultMonthlyLimit" type="number" min="0" step="1" placeholder="0 = ไม่จำกัด" />
+              </label>
+              <button id="saveDefaultLimits" type="button" class="btn-primary">บันทึก</button>
+            </div>
+          </div>
           <p id="adminSettingError" class="admin-error" hidden></p>
         </section>
 
@@ -206,6 +254,87 @@
             <tbody id="usageRows"></tbody>
           </table>
           </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Account settings (all logged-in users) -->
+    <div id="settingsView" hidden>
+      <header class="admin-header">
+        <button id="settingsBack" type="button" class="btn-secondary">← กลับไปแชท</button>
+        <h1>ตั้งค่าบัญชี</h1>
+      </header>
+      <div class="admin-body">
+        <section class="admin-section">
+          <div class="admin-section-head">
+            <h2><span class="admin-section-icon">📊</span> การใช้งานโทเคน</h2>
+            <button id="quotaRefresh" type="button" class="btn-secondary">รีเฟรช</button>
+          </div>
+          <div class="usage-meter">
+            <div class="usage-meter-head">
+              <span class="usage-meter-name">วันนี้ <span class="usage-meter-reset">(รีเซ็ตทุกวัน)</span></span>
+              <span id="dailyUsageText" class="usage-meter-val">—</span>
+            </div>
+            <div class="usage-bar"><div id="dailyUsageFill" class="usage-bar-fill"></div></div>
+          </div>
+          <div class="usage-meter">
+            <div class="usage-meter-head">
+              <span class="usage-meter-name">เดือนนี้ <span class="usage-meter-reset">(รีเซ็ตทุกเดือน)</span></span>
+              <span id="monthlyUsageText" class="usage-meter-val">—</span>
+            </div>
+            <div class="usage-bar"><div id="monthlyUsageFill" class="usage-bar-fill"></div></div>
+          </div>
+          <p class="usage-meter-total">การใช้งานสะสมทั้งหมด: <strong id="totalUsageText">—</strong></p>
+        </section>
+
+        <section class="admin-section">
+          <div class="admin-section-head">
+            <h2><span class="admin-section-icon">👤</span> โปรไฟล์</h2>
+          </div>
+          <form id="profileForm" class="admin-create-modal settings-form">
+            <label class="field">
+              <span class="field-label">ชื่อผู้ใช้ (เปลี่ยนแล้วต้องใช้ชื่อใหม่ในการเข้าสู่ระบบ)</span>
+              <input id="profileUsername" type="text" autocomplete="username" />
+            </label>
+            <label class="field">
+              <span class="field-label">อีเมล (ใช้สำหรับกู้คืนรหัสผ่าน)</span>
+              <input id="profileEmail" type="email" placeholder="you@example.com" autocomplete="email" />
+            </label>
+            <label class="field" id="profilePassRow" hidden>
+              <span class="field-label">ยืนยันด้วยรหัสผ่านปัจจุบัน (จำเป็นเมื่อเปลี่ยนชื่อผู้ใช้)</span>
+              <input id="profilePassword" type="password" autocomplete="current-password" />
+            </label>
+            <p id="profileError" class="admin-error" hidden></p>
+            <p id="profileSuccess" class="login-success" hidden></p>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary">บันทึกโปรไฟล์</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="admin-section">
+          <div class="admin-section-head">
+            <h2><span class="admin-section-icon">🔑</span> เปลี่ยนรหัสผ่าน</h2>
+          </div>
+          <form id="passwordForm" class="admin-create-modal settings-form">
+            <label class="field">
+              <span class="field-label">รหัสผ่านปัจจุบัน</span>
+              <input id="curPassword" type="password" autocomplete="current-password" />
+            </label>
+            <label class="field">
+              <span class="field-label">รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)</span>
+              <input id="newPassword" type="password" autocomplete="new-password" />
+            </label>
+            <label class="field">
+              <span class="field-label">ยืนยันรหัสผ่านใหม่</span>
+              <input id="newPassword2" type="password" autocomplete="new-password" />
+            </label>
+            <p id="passwordError" class="admin-error" hidden></p>
+            <p id="passwordSuccess" class="login-success" hidden></p>
+            <div class="modal-actions">
+              <button type="submit" class="btn-primary">เปลี่ยนรหัสผ่าน</button>
+            </div>
+          </form>
         </section>
       </div>
     </div>
@@ -263,6 +392,49 @@
     </div>
   </div>
 
+  <!-- Token-limits modal -->
+  <div id="tokenLimitModal" class="modal-overlay" hidden>
+    <div class="modal-card create-user-card">
+      <div class="modal-head">
+        <span class="modal-head-icon">⏱</span>
+        <div>
+          <p class="modal-title">โควต้าโทเคน</p>
+          <p id="tokenLimitSubtitle" class="modal-subtitle">กำหนดลิมิตเฉพาะตัว (input + output รวมกัน)</p>
+        </div>
+      </div>
+      <form id="tokenLimitForm" class="admin-create-modal">
+        <label class="field">
+          <span class="field-label">โควต้าต่อวัน</span>
+          <div class="admin-search">
+            <svg class="admin-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"></circle>
+              <polyline points="12 7 12 12 15 14"></polyline>
+            </svg>
+            <input id="limitDaily" type="number" min="0" step="1" placeholder="ว่าง = ใช้ค่าเริ่มต้น" />
+          </div>
+        </label>
+        <label class="field">
+          <span class="field-label">โควต้าต่อเดือน</span>
+          <div class="admin-search">
+            <svg class="admin-search-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4.5" width="18" height="16" rx="2"></rect>
+              <line x1="3" y1="9.5" x2="21" y2="9.5"></line>
+              <line x1="8" y1="2.5" x2="8" y2="6.5"></line>
+              <line x1="16" y1="2.5" x2="16" y2="6.5"></line>
+            </svg>
+            <input id="limitMonthly" type="number" min="0" step="1" placeholder="ว่าง = ใช้ค่าเริ่มต้น" />
+          </div>
+        </label>
+        <p class="field-hint">ว่าง = ใช้ค่าเริ่มต้นของระบบ · 0 = ไม่จำกัด</p>
+        <p id="tokenLimitError" class="admin-error" hidden></p>
+        <div class="modal-actions">
+          <button id="tokenLimitCancel" type="button" class="btn-secondary">ยกเลิก</button>
+          <button type="submit" class="btn-primary">บันทึก</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Delete-confirmation modal -->
   <div id="confirmModal" class="modal-overlay" hidden>
     <div class="modal-card">
@@ -276,6 +448,6 @@
   </div>
 
   <script src="/vendor/katex/katex.min.js"></script>
-  <script src="/app.js?v=6"></script>
+  <script src="/app.js?v=7"></script>
 </body>
 </html>

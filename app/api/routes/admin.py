@@ -17,6 +17,10 @@ from app.api.deps import (
     require_admin,
 )
 from app.api.passwords import hash_password
+from app.api.quota import (
+    DEFAULT_DAILY_TOKEN_LIMIT_KEY,
+    DEFAULT_MONTHLY_TOKEN_LIMIT_KEY,
+)
 from app.config import Settings, get_settings
 from app.llm.registry import LLMRegistry
 from app.schemas import (
@@ -24,6 +28,7 @@ from app.schemas import (
     DisabledUpdate,
     PasswordReset,
     RoleUpdate,
+    TokenLimitsUpdate,
     UsageEventOut,
     UsageTotals,
     UserCreate,
@@ -59,6 +64,8 @@ async def _get_or_404(user_store: UserStore, username: str) -> UserOut:
         role=record.role,
         disabled=record.disabled,
         created_at=record.created_at,
+        daily_token_limit=record.daily_token_limit,
+        monthly_token_limit=record.monthly_token_limit,
     )
 
 
@@ -144,6 +151,19 @@ async def set_disabled(
     return Response(status_code=204)
 
 
+@router.put("/users/{username}/token-limits", status_code=204)
+async def set_token_limits(
+    username: str,
+    req: TokenLimitsUpdate,
+    user_store: UserStore = Depends(_require_user_store),
+):
+    await _get_or_404(user_store, username)
+    await user_store.set_token_limits(
+        username, daily=req.daily_token_limit, monthly=req.monthly_token_limit
+    )
+    return Response(status_code=204)
+
+
 @router.delete("/users/{username}", status_code=204)
 async def delete_user(
     username: str,
@@ -169,6 +189,18 @@ def _require_settings_store(
     return settings_store
 
 
+async def _get_int(
+    settings_store: SettingsStore, key: str, fallback: int
+) -> int:
+    raw = await settings_store.get(key)
+    if raw is None:
+        return fallback
+    try:
+        return int(raw)
+    except ValueError:
+        return fallback
+
+
 @router.get("/settings", response_model=AppSettings)
 async def get_app_settings(
     settings: Settings = Depends(get_settings),
@@ -181,6 +213,14 @@ async def get_app_settings(
         model_provider=(
             await settings_store.get(MODEL_PROVIDER_KEY)
             or settings.default_llm_provider
+        ),
+        default_daily_token_limit=await _get_int(
+            settings_store, DEFAULT_DAILY_TOKEN_LIMIT_KEY,
+            settings.default_daily_token_limit,
+        ),
+        default_monthly_token_limit=await _get_int(
+            settings_store, DEFAULT_MONTHLY_TOKEN_LIMIT_KEY,
+            settings.default_monthly_token_limit,
         ),
     )
 
@@ -200,13 +240,15 @@ async def update_app_settings(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         await settings_store.set(MODEL_PROVIDER_KEY, req.model_provider)
-    return AppSettings(
-        registration_enabled=req.registration_enabled,
-        model_provider=(
-            await settings_store.get(MODEL_PROVIDER_KEY)
-            or settings.default_llm_provider
-        ),
-    )
+    if req.default_daily_token_limit is not None:
+        await settings_store.set(
+            DEFAULT_DAILY_TOKEN_LIMIT_KEY, str(req.default_daily_token_limit)
+        )
+    if req.default_monthly_token_limit is not None:
+        await settings_store.set(
+            DEFAULT_MONTHLY_TOKEN_LIMIT_KEY, str(req.default_monthly_token_limit)
+        )
+    return await get_app_settings(settings, settings_store)
 
 
 # --- Usage ----------------------------------------------------------------

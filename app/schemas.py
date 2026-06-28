@@ -1,9 +1,10 @@
 """Pydantic request/response models for the public API."""
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --- Search ---------------------------------------------------------------
@@ -63,11 +64,72 @@ class RegisterResponse(BaseModel):
     message: str
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=254)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=256)
+
+
+class GenericMessage(BaseModel):
+    message: str
+
+
+# --- Self-service account ("/v1/me") --------------------------------------
+
+class MeProfile(BaseModel):
+    username: str
+    role: Role = "user"
+    email: str | None = None
+    created_at: float | None = None
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=6, max_length=256)
+
+
+class EmailUpdate(BaseModel):
+    # Empty string clears the email; otherwise it must look like an address.
+    email: str = Field(..., max_length=254)
+
+    @field_validator("email")
+    @classmethod
+    def _check(cls, v: str) -> str:
+        v = v.strip()
+        if v and not _EMAIL_RE.match(v):
+            raise ValueError("invalid email address")
+        return v
+
+
+class UsernameChange(BaseModel):
+    new_username: str = Field(..., min_length=3, max_length=64)
+    password: str = Field(..., min_length=1)
+
+
+class QuotaWindow(BaseModel):
+    used: int = 0
+    limit: int | None = None  # None = unlimited
+
+
+class QuotaStatus(BaseModel):
+    daily: QuotaWindow
+    monthly: QuotaWindow
+
+
 class AppSettings(BaseModel):
     # Optional so PUT /v1/admin/settings can patch one field at a time; GET
     # always returns concrete values.
     registration_enabled: bool | None = None
     model_provider: str | None = None  # global LLM provider for non-admins
+    # Default per-user token caps (input + output combined), 0 = unlimited.
+    default_daily_token_limit: int | None = None
+    default_monthly_token_limit: int | None = None
 
 
 # --- Users (admin management) --------------------------------------------
@@ -77,6 +139,10 @@ class UserOut(BaseModel):
     role: Role
     disabled: bool
     created_at: float
+    # Per-user token caps: None = inherit the default, 0 = unlimited, >0 = cap.
+    daily_token_limit: int | None = None
+    monthly_token_limit: int | None = None
+    email: str | None = None
 
 
 class UserCreate(BaseModel):
@@ -95,6 +161,12 @@ class RoleUpdate(BaseModel):
 
 class DisabledUpdate(BaseModel):
     disabled: bool
+
+
+class TokenLimitsUpdate(BaseModel):
+    # None = inherit the default for that window, 0 = unlimited, >0 = cap.
+    daily_token_limit: int | None = Field(None, ge=0)
+    monthly_token_limit: int | None = Field(None, ge=0)
 
 
 # --- Token usage ----------------------------------------------------------

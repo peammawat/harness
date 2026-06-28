@@ -268,6 +268,14 @@ class SqliteConversationStore(ConversationStore):
             ],
         )
 
+    async def rename_user(self, old: str, new: str) -> None:
+        async with self._lock:
+            db = self._conn()
+            await db.execute(
+                "UPDATE conversations SET user = ? WHERE user = ?", (new, old)
+            )
+            await db.commit()
+
     async def close(self) -> None:
         if self._db is not None:
             await self._db.close()

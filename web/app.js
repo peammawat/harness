@@ -101,7 +101,28 @@ function hideAuthViews() {
   $("landing").hidden = true;
   $("login").hidden = true;
   $("register").hidden = true;
+  $("forgot").hidden = true;
+  $("reset").hidden = true;
   $("app").hidden = true;
+}
+
+function showForgot() {
+  hideAuthViews();
+  $("forgot").hidden = false;
+  $("forgotError").hidden = true;
+  $("forgotSuccess").hidden = true;
+  $("forgotEmail").focus();
+}
+
+// `token` is the reset token pulled from the URL (?reset=<token>).
+let resetToken = "";
+function showReset(token) {
+  resetToken = token;
+  hideAuthViews();
+  $("reset").hidden = false;
+  $("resetError").hidden = true;
+  $("resetSuccess").hidden = true;
+  $("resetPass").focus();
 }
 
 function applyRegistrationVisibility() {
@@ -668,6 +689,13 @@ async function send(text) {
     logout("เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่");
     return;
   }
+  if (res.status === 429) {
+    assistantEl.remove();
+    let msg = "เกินโควต้าการใช้งานโทเคน";
+    try { msg = (await res.json()).detail || msg; } catch {}
+    addMsg("error", msg);
+    return;
+  }
   if (!res.ok) {
     assistantEl.remove();
     addMsg("error", `HTTP ${res.status}: ${await res.text()}`);
@@ -982,7 +1010,35 @@ async function loadSettings() {
   try {
     const data = await (await adminFetch("/v1/admin/settings")).json();
     $("regToggle").checked = !!data.registration_enabled;
+    $("defaultDailyLimit").value = data.default_daily_token_limit ?? 0;
+    $("defaultMonthlyLimit").value = data.default_monthly_token_limit ?? 0;
   } catch { /* adminFetch already handled 401/403 */ }
+}
+
+async function saveDefaultLimits() {
+  adminSettingError("");
+  const daily = parseInt($("defaultDailyLimit").value, 10);
+  const monthly = parseInt($("defaultMonthlyLimit").value, 10);
+  if (!Number.isInteger(daily) || daily < 0 || !Number.isInteger(monthly) || monthly < 0) {
+    adminSettingError("โควต้าต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป");
+    return;
+  }
+  try {
+    const res = await adminFetch("/v1/admin/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        default_daily_token_limit: daily,
+        default_monthly_token_limit: monthly,
+      }),
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    $("defaultDailyLimit").value = data.default_daily_token_limit ?? 0;
+    $("defaultMonthlyLimit").value = data.default_monthly_token_limit ?? 0;
+  } catch (err) {
+    if (String(err.message) === "unauthorized" || String(err.message) === "forbidden") return;
+    adminSettingError("บันทึกโควต้าเริ่มต้นไม่สำเร็จ");
+  }
 }
 
 async function saveSettings() {
@@ -1017,8 +1073,192 @@ async function saveModelProvider(provider) {
 
 function showChat() {
   $("adminView").hidden = true;
+  $("settingsView").hidden = true;
   $("sidebar").hidden = false;
   $("pane").hidden = false;
+}
+
+// ===================== Account settings =====================
+function showSettings() {
+  $("sidebar").hidden = true;
+  $("pane").hidden = true;
+  $("adminView").hidden = true;
+  $("settingsView").hidden = false;
+  loadProfile();
+  loadQuota();
+}
+
+function settingsError(id, msg) {
+  const el = $(id);
+  if (msg) { el.textContent = msg; el.hidden = false; }
+  else { el.hidden = true; }
+}
+
+async function loadProfile() {
+  settingsError("profileError", "");
+  $("profileSuccess").hidden = true;
+  $("profilePassRow").hidden = true;
+  $("profilePassword").value = "";
+  try {
+    const me = await (await adminFetch("/v1/me")).json();
+    $("profileUsername").value = me.username || "";
+    $("profileEmail").value = me.email || "";
+    $("profileUsername").dataset.original = me.username || "";
+  } catch { /* adminFetch handled 401 */ }
+}
+
+// Render a usage window into its progress bar; null limit = unlimited (no bar).
+function renderUsageMeter(win, textId, fillId) {
+  const used = win.used || 0;
+  const fill = $(fillId);
+  if (win.limit == null || win.limit <= 0) {
+    $(textId).textContent = `${fmtTokens(used)} โทเคน (ไม่จำกัด)`;
+    fill.style.width = "0%";
+    fill.classList.remove("usage-bar-fill-warn", "usage-bar-fill-full");
+    return;
+  }
+  const pct = Math.min(100, Math.round((used / win.limit) * 100));
+  $(textId).textContent = `${fmtTokens(used)} / ${fmtTokens(win.limit)} โทเคน (${pct}%)`;
+  fill.style.width = pct + "%";
+  fill.classList.toggle("usage-bar-fill-full", pct >= 100);
+  fill.classList.toggle("usage-bar-fill-warn", pct >= 80 && pct < 100);
+}
+
+async function loadQuota() {
+  try {
+    const q = await (await adminFetch("/v1/me/quota")).json();
+    renderUsageMeter(q.daily, "dailyUsageText", "dailyUsageFill");
+    renderUsageMeter(q.monthly, "monthlyUsageText", "monthlyUsageFill");
+  } catch { return; }
+  try {
+    const t = await (await adminFetch("/v1/usage/me")).json();
+    $("totalUsageText").textContent =
+      `${fmtTokens((t.input_tokens || 0) + (t.output_tokens || 0))} โทเคน · ${t.events || 0} คำขอ`;
+  } catch { /* adminFetch handled 401 */ }
+}
+
+// Show the password-confirm field as soon as the user edits their username.
+function onUsernameInput() {
+  const changed =
+    $("profileUsername").value.trim() !== ($("profileUsername").dataset.original || "");
+  $("profilePassRow").hidden = !changed;
+}
+
+async function saveProfile() {
+  settingsError("profileError", "");
+  $("profileSuccess").hidden = true;
+  const original = $("profileUsername").dataset.original || "";
+  const newName = $("profileUsername").value.trim();
+  const email = $("profileEmail").value.trim();
+
+  // 1) Email update (always attempted; backend no-ops if unchanged is fine).
+  try {
+    const res = await adminFetch("/v1/me/email", {
+      method: "PUT",
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      let d = "บันทึกอีเมลไม่สำเร็จ";
+      try { d = (await res.json()).detail || d; } catch {}
+      settingsError("profileError", d);
+      return;
+    }
+  } catch (err) {
+    if (String(err.message) === "unauthorized") return;
+    settingsError("profileError", "บันทึกอีเมลไม่สำเร็จ");
+    return;
+  }
+
+  // 2) Username rename (only when changed) — re-auth with the password, then
+  // swap the stored token for the fresh one the server returns.
+  if (newName && newName !== original) {
+    const password = $("profilePassword").value;
+    if (!password) {
+      settingsError("profileError", "กรุณากรอกรหัสผ่านปัจจุบันเพื่อเปลี่ยนชื่อผู้ใช้");
+      return;
+    }
+    try {
+      const res = await adminFetch("/v1/me/username", {
+        method: "PUT",
+        body: JSON.stringify({ new_username: newName, password }),
+      });
+      if (!res.ok) {
+        let d = "เปลี่ยนชื่อผู้ใช้ไม่สำเร็จ";
+        try { d = (await res.json()).detail || d; } catch {}
+        settingsError("profileError", d);
+        return;
+      }
+      const data = await res.json();
+      localStorage.setItem(TOKEN_KEY, data.token);
+      localStorage.setItem(USER_KEY, data.username);
+      localStorage.setItem(ROLE_KEY, data.role || "user");
+      $("userName").textContent = data.username;
+    } catch (err) {
+      if (String(err.message) === "unauthorized") return;
+      settingsError("profileError", "เปลี่ยนชื่อผู้ใช้ไม่สำเร็จ");
+      return;
+    }
+  }
+  await loadProfile();
+  $("profileSuccess").textContent = "บันทึกโปรไฟล์เรียบร้อยแล้ว";
+  $("profileSuccess").hidden = false;
+}
+
+async function changePassword() {
+  settingsError("passwordError", "");
+  $("passwordSuccess").hidden = true;
+  const current = $("curPassword").value;
+  const next = $("newPassword").value;
+  const confirm = $("newPassword2").value;
+  if (next.length < 6) {
+    settingsError("passwordError", "รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร");
+    return;
+  }
+  if (next !== confirm) {
+    settingsError("passwordError", "รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน");
+    return;
+  }
+  try {
+    const res = await adminFetch("/v1/me/password", {
+      method: "PUT",
+      body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+    if (!res.ok) {
+      let d = "เปลี่ยนรหัสผ่านไม่สำเร็จ";
+      try { d = (await res.json()).detail || d; } catch {}
+      settingsError("passwordError", d);
+      return;
+    }
+  } catch (err) {
+    if (String(err.message) === "unauthorized") return;
+    settingsError("passwordError", "เปลี่ยนรหัสผ่านไม่สำเร็จ");
+    return;
+  }
+  $("passwordForm").reset();
+  $("passwordSuccess").textContent = "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว";
+  $("passwordSuccess").hidden = false;
+}
+
+async function submitForgot(email) {
+  const res = await fetch("/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "ส่งคำขอไม่สำเร็จ");
+  return data.message || "หากมีบัญชีที่ผูกกับอีเมลนี้ ระบบได้ส่งลิงก์รีเซ็ตไปให้แล้ว";
+}
+
+async function submitReset(token, newPassword) {
+  const res = await fetch("/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "ตั้งรหัสผ่านใหม่ไม่สำเร็จ");
+  return data.message || "ตั้งรหัสผ่านใหม่เรียบร้อยแล้ว";
 }
 
 // Wrap a fetch to the admin API; routes 401 → re-login, 403 → back to chat.
@@ -1042,6 +1282,30 @@ function createUserError(msg) {
   const el = $("createUserError");
   if (msg) { el.textContent = msg; el.hidden = false; }
   else { el.hidden = true; }
+}
+
+function tokenLimitError(msg) {
+  const el = $("tokenLimitError");
+  if (msg) { el.textContent = msg; el.hidden = false; }
+  else { el.hidden = true; }
+}
+
+let tokenLimitTarget = null;
+
+function openTokenLimitModal(user) {
+  tokenLimitTarget = user.username;
+  $("tokenLimitSubtitle").textContent = `กำหนดลิมิตเฉพาะตัวสำหรับ ${user.username} (input + output รวมกัน)`;
+  // null (inherit default) → empty field; a number (incl. 0 = unlimited) shows as-is.
+  $("limitDaily").value = user.daily_token_limit ?? "";
+  $("limitMonthly").value = user.monthly_token_limit ?? "";
+  tokenLimitError("");
+  $("tokenLimitModal").hidden = false;
+  $("limitDaily").focus();
+}
+
+function closeTokenLimitModal() {
+  $("tokenLimitModal").hidden = true;
+  tokenLimitTarget = null;
 }
 
 let allUsers = [];
@@ -1101,6 +1365,11 @@ function renderUsers() {
     disBtn.disabled = self;
     disBtn.onclick = () => setUserDisabled(u.username, !u.disabled);
     actions.appendChild(disBtn);
+
+    const limitBtn = document.createElement("button");
+    limitBtn.textContent = "⏱ โควต้า";
+    limitBtn.onclick = () => openTokenLimitModal(u);
+    actions.appendChild(limitBtn);
 
     const delBtn = document.createElement("button");
     delBtn.textContent = "🗑 ลบ";
@@ -1196,6 +1465,14 @@ async function loadUsage() {
 $("adminBtn").addEventListener("click", showAdmin);
 $("adminBack").addEventListener("click", showChat);
 $("usageRefresh").addEventListener("click", loadUsage);
+
+// ===================== Account settings wiring =====================
+$("settingsBtn").addEventListener("click", showSettings);
+$("settingsBack").addEventListener("click", showChat);
+$("quotaRefresh").addEventListener("click", loadQuota);
+$("profileUsername").addEventListener("input", onUsernameInput);
+$("profileForm").addEventListener("submit", (e) => { e.preventDefault(); saveProfile(); });
+$("passwordForm").addEventListener("submit", (e) => { e.preventDefault(); changePassword(); });
 function openCreateUserModal() {
   $("newUserName").value = "";
   $("newUserPass").value = "";
@@ -1241,6 +1518,44 @@ $("createUserForm").addEventListener("submit", async (e) => {
   if (ok) closeCreateUserModal();
 });
 
+// Parse a limit field: empty → null (inherit default), else a non-negative int.
+function parseLimitField(raw) {
+  const v = raw.trim();
+  if (v === "") return { ok: true, value: null };
+  const n = parseInt(v, 10);
+  if (!Number.isInteger(n) || n < 0 || String(n) !== v) return { ok: false };
+  return { ok: true, value: n };
+}
+
+$("saveDefaultLimits").addEventListener("click", saveDefaultLimits);
+$("tokenLimitCancel").addEventListener("click", closeTokenLimitModal);
+$("tokenLimitModal").addEventListener("click", (e) => {
+  if (e.target.id === "tokenLimitModal") closeTokenLimitModal();
+});
+$("tokenLimitForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!tokenLimitTarget) return;
+  const daily = parseLimitField($("limitDaily").value);
+  const monthly = parseLimitField($("limitMonthly").value);
+  if (!daily.ok || !monthly.ok) {
+    tokenLimitError("โควต้าต้องเว้นว่าง หรือเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป");
+    return;
+  }
+  const ok = await adminMutate(
+    `/v1/admin/users/${encodeURIComponent(tokenLimitTarget)}/token-limits`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        daily_token_limit: daily.value,
+        monthly_token_limit: monthly.value,
+      }),
+    },
+    "บันทึกโควต้าไม่สำเร็จ",
+    tokenLimitError
+  );
+  if (ok) closeTokenLimitModal();
+});
+
 // ===================== Admin settings wiring =====================
 $("regToggle").addEventListener("change", saveSettings);
 // Only admins can edit the model dropdown; persist their choice as the global default.
@@ -1257,6 +1572,62 @@ $("loginBack").addEventListener("click", showLanding);
 $("registerBack").addEventListener("click", showLanding);
 $("toRegister").addEventListener("click", showRegister);
 $("toLogin").addEventListener("click", () => showLogin());
+$("toForgot").addEventListener("click", showForgot);
+$("forgotBack").addEventListener("click", () => showLogin());
+$("resetBack").addEventListener("click", () => showLogin());
+
+$("forgotForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = $("forgotEmail").value.trim();
+  $("forgotError").hidden = true;
+  $("forgotSuccess").hidden = true;
+  if (!email) return;
+  $("forgotBtn").disabled = true;
+  try {
+    const msg = await submitForgot(email);
+    $("forgotForm").reset();
+    $("forgotSuccess").textContent = msg;
+    $("forgotSuccess").hidden = false;
+  } catch (err) {
+    $("forgotError").textContent = String(err.message || err);
+    $("forgotError").hidden = false;
+  } finally {
+    $("forgotBtn").disabled = false;
+  }
+});
+
+$("resetForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const p1 = $("resetPass").value;
+  const p2 = $("resetPass2").value;
+  $("resetError").hidden = true;
+  $("resetSuccess").hidden = true;
+  if (p1.length < 6) {
+    $("resetError").textContent = "รหัสผ่านใหม่ต้องมีอย่างน้อย 6 ตัวอักษร";
+    $("resetError").hidden = false;
+    return;
+  }
+  if (p1 !== p2) {
+    $("resetError").textContent = "รหัสผ่านทั้งสองช่องไม่ตรงกัน";
+    $("resetError").hidden = false;
+    return;
+  }
+  $("resetBtn").disabled = true;
+  try {
+    const msg = await submitReset(resetToken, p1);
+    $("resetForm").reset();
+    $("resetSuccess").textContent = msg + " — กำลังพาไปหน้าเข้าสู่ระบบ";
+    $("resetSuccess").hidden = false;
+    // Clear the ?reset= token from the URL, then return to login.
+    history.replaceState(null, "", location.pathname);
+    setTimeout(() => showLogin("ตั้งรหัสผ่านใหม่แล้ว กรุณาเข้าสู่ระบบ"), 1500);
+  } catch (err) {
+    $("resetError").textContent = String(err.message || err);
+    $("resetError").hidden = false;
+  } finally {
+    $("resetBtn").disabled = false;
+  }
+});
 
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1340,8 +1711,14 @@ async function enterSharedMode(token) {
 }
 
 async function init() {
-  const sharedToken = new URLSearchParams(location.search).get("s");
+  const params = new URLSearchParams(location.search);
+  const sharedToken = params.get("s");
   if (sharedToken) { await enterSharedMode(sharedToken); return; }
+
+  // Password-reset deep link (?reset=<token>) — show the reset form regardless
+  // of any stale session, so a recovering user is never blocked.
+  const resetParam = params.get("reset");
+  if (resetParam) { showReset(resetParam); return; }
 
   if (!getToken()) {
     await loadRegistrationFlag();
