@@ -27,11 +27,23 @@ from app.llm.registry import LLMRegistry
 from app.search.registry import SearchRegistry
 from app.storage import (
     SqliteConversationStore,
+    SqliteSettingsStore,
     SqliteUsageStore,
     SqliteUserStore,
 )
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """Static UI files with `Cache-Control: no-cache` so browsers (and the CDN
+    in front) revalidate via ETag on every load instead of serving a stale
+    bundle for hours after a deploy. `no-cache` still allows cheap 304s."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 @contextlib.asynccontextmanager
@@ -66,6 +78,11 @@ async def lifespan(app: FastAPI):
     usage_store = SqliteUsageStore(settings.auth_db_path)
     await usage_store.init()
     app.state.usage_store = usage_store
+
+    # Runtime app settings (e.g. self-registration toggle) live in the same DB.
+    settings_store = SqliteSettingsStore(settings.auth_db_path)
+    await settings_store.init()
+    app.state.settings_store = settings_store
     try:
         yield
     finally:
@@ -74,6 +91,7 @@ async def lifespan(app: FastAPI):
             await store.close()
         await user_store.close()
         await usage_store.close()
+        await settings_store.close()
 
 
 def create_app() -> FastAPI:
@@ -119,7 +137,7 @@ def create_app() -> FastAPI:
 
     # Serve the static chat UI at the root (added last so /v1/* and /docs win).
     if WEB_DIR.is_dir():
-        app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+        app.mount("/", NoCacheStaticFiles(directory=str(WEB_DIR), html=True), name="web")
 
     return app
 

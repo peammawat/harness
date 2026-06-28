@@ -8,10 +8,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-from app.api.deps import AuthIdentity, get_usage_store, get_user_store, require_admin
+from app.api.deps import (
+    AuthIdentity,
+    get_llm_registry,
+    get_settings_store,
+    get_usage_store,
+    get_user_store,
+    require_admin,
+)
 from app.api.passwords import hash_password
 from app.config import Settings, get_settings
+from app.llm.registry import LLMRegistry
 from app.schemas import (
+    AppSettings,
     DisabledUpdate,
     PasswordReset,
     RoleUpdate,
@@ -20,8 +29,12 @@ from app.schemas import (
     UserCreate,
     UserOut,
 )
+from app.storage.settings_store import SettingsStore
 from app.storage.usage_store import UsageStore
 from app.storage.user_store import UserStore
+
+REGISTRATION_KEY = "registration_enabled"
+MODEL_PROVIDER_KEY = "model_provider"
 
 router = APIRouter(prefix="/v1/admin", dependencies=[Depends(require_admin)])
 
@@ -141,6 +154,59 @@ async def delete_user(
     await _guard_admin_access_removal(user_store, identity, target, "delete")
     await user_store.delete(username)
     return Response(status_code=204)
+
+
+# --- App settings ---------------------------------------------------------
+
+def _require_settings_store(
+    settings_store: SettingsStore | None = Depends(get_settings_store),
+) -> SettingsStore:
+    if settings_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Settings store is not available.",
+        )
+    return settings_store
+
+
+@router.get("/settings", response_model=AppSettings)
+async def get_app_settings(
+    settings: Settings = Depends(get_settings),
+    settings_store: SettingsStore = Depends(_require_settings_store),
+):
+    return AppSettings(
+        registration_enabled=await settings_store.get_bool(
+            REGISTRATION_KEY, settings.registration_enabled
+        ),
+        model_provider=(
+            await settings_store.get(MODEL_PROVIDER_KEY)
+            or settings.default_llm_provider
+        ),
+    )
+
+
+@router.put("/settings", response_model=AppSettings)
+async def update_app_settings(
+    req: AppSettings,
+    settings: Settings = Depends(get_settings),
+    settings_store: SettingsStore = Depends(_require_settings_store),
+    llm: LLMRegistry = Depends(get_llm_registry),
+):
+    if req.registration_enabled is not None:
+        await settings_store.set_bool(REGISTRATION_KEY, req.registration_enabled)
+    if req.model_provider:
+        try:
+            llm.get(req.model_provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await settings_store.set(MODEL_PROVIDER_KEY, req.model_provider)
+    return AppSettings(
+        registration_enabled=req.registration_enabled,
+        model_provider=(
+            await settings_store.get(MODEL_PROVIDER_KEY)
+            or settings.default_llm_provider
+        ),
+    )
 
 
 # --- Usage ----------------------------------------------------------------

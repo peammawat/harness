@@ -101,3 +101,86 @@ def test_protected_route_rejects_bad_bearer(client):
         headers={"Authorization": "Bearer not-a-real-token"},
     )
     assert res.status_code == 401
+
+
+# --- Self-registration -----------------------------------------------------
+
+@pytest.fixture
+def reg_client(monkeypatch, tmp_path):
+    monkeypatch.setenv("API_KEYS", "sk-test-123")
+    monkeypatch.setenv("AUTH_USERS", "boss:bosspass")
+    monkeypatch.setenv("ADMIN_USERS", "boss")
+    monkeypatch.setenv("AUTH_SECRET", "reg-test-secret")
+    monkeypatch.setenv("CHAT_DB_PATH", str(tmp_path / "chat.db"))
+    get_settings.cache_clear()
+    app = create_app()
+    with TestClient(app) as c:
+        yield c
+    get_settings.cache_clear()
+
+
+def _enable_registration(client, enabled: bool) -> None:
+    token = client.post(
+        "/auth/login", json={"username": "boss", "password": "bosspass"}
+    ).json()["token"]
+    res = client.put(
+        "/v1/admin/settings",
+        json={"registration_enabled": enabled},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 200, res.text
+
+
+def test_register_disabled_by_default(reg_client):
+    res = reg_client.post(
+        "/auth/register", json={"username": "newbie", "password": "secret123"}
+    )
+    assert res.status_code == 403
+    # The public capabilities flag reflects the off state.
+    assert reg_client.get("/v1/capabilities").json()["registration_enabled"] is False
+
+
+def test_register_creates_disabled_account_pending_approval(reg_client):
+    _enable_registration(reg_client, True)
+    assert reg_client.get("/v1/capabilities").json()["registration_enabled"] is True
+
+    res = reg_client.post(
+        "/auth/register", json={"username": "newbie", "password": "secret123"}
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["status"] == "pending"
+
+    # Pending account cannot log in until an admin enables it.
+    login = reg_client.post(
+        "/auth/login", json={"username": "newbie", "password": "secret123"}
+    )
+    assert login.status_code == 401
+
+    # Admin sees it as disabled, then enables it → login works.
+    boss = reg_client.post(
+        "/auth/login", json={"username": "boss", "password": "bosspass"}
+    ).json()["token"]
+    auth = {"Authorization": f"Bearer {boss}"}
+    users = {u["username"]: u for u in reg_client.get("/v1/admin/users", headers=auth).json()}
+    assert users["newbie"]["disabled"] is True
+    assert (
+        reg_client.put(
+            "/v1/admin/users/newbie/disabled", json={"disabled": False}, headers=auth
+        ).status_code
+        == 204
+    )
+    assert (
+        reg_client.post(
+            "/auth/login", json={"username": "newbie", "password": "secret123"}
+        ).status_code
+        == 200
+    )
+
+
+def test_register_rejects_duplicate(reg_client):
+    _enable_registration(reg_client, True)
+    reg_client.post("/auth/register", json={"username": "dup", "password": "secret123"})
+    res = reg_client.post(
+        "/auth/register", json={"username": "dup", "password": "secret123"}
+    )
+    assert res.status_code == 409

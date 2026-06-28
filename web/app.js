@@ -93,17 +93,49 @@ const authHeader = () => {
   return t ? { Authorization: "Bearer " + t } : {};
 };
 
-function showLogin(message) {
+// Whether self-registration is currently open (from /v1/capabilities). Drives
+// the visibility of every "สมัครสมาชิก" affordance on the logged-out screens.
+let registrationEnabled = false;
+
+function hideAuthViews() {
+  $("landing").hidden = true;
+  $("login").hidden = true;
+  $("register").hidden = true;
   $("app").hidden = true;
+}
+
+function applyRegistrationVisibility() {
+  for (const id of ["navRegister", "heroRegister", "loginSwitch"]) {
+    $(id).hidden = !registrationEnabled;
+  }
+}
+
+function showLanding() {
+  hideAuthViews();
+  applyRegistrationVisibility();
+  $("landing").hidden = false;
+}
+
+function showLogin(message) {
+  hideAuthViews();
   $("login").hidden = false;
+  applyRegistrationVisibility();
   const err = $("loginError");
   if (message) { err.textContent = message; err.hidden = false; }
   else { err.hidden = true; }
   $("loginUser").focus();
 }
 
+function showRegister() {
+  hideAuthViews();
+  $("register").hidden = false;
+  $("registerError").hidden = true;
+  $("registerSuccess").hidden = true;
+  $("registerUser").focus();
+}
+
 function showApp() {
-  $("login").hidden = true;
+  hideAuthViews();
   $("app").hidden = false;
   $("userName").textContent = localStorage.getItem(USER_KEY) || "";
   $("adminBtn").hidden = !isAdmin();
@@ -131,6 +163,31 @@ async function login(username, password) {
   localStorage.setItem(TOKEN_KEY, data.token);
   localStorage.setItem(USER_KEY, data.username);
   localStorage.setItem(ROLE_KEY, data.role || "user");
+}
+
+async function register(username, password) {
+  const res = await fetch("/auth/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    let detail = "สมัครสมาชิกไม่สำเร็จ";
+    try { detail = (await res.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+// Fetch the public registration toggle (no auth) so the logged-out screens know
+// whether to show the "สมัครสมาชิก" affordances.
+async function loadRegistrationFlag() {
+  try {
+    const res = await fetch("/v1/capabilities");
+    registrationEnabled = !!(await res.json()).registration_enabled;
+  } catch {
+    registrationEnabled = false;
+  }
 }
 
 // ===================== Chat history store (server-backed) =====================
@@ -519,6 +576,8 @@ async function loadCapabilities() {
     if (llms.includes(caps.llm_providers.default)) {
       providerSel.value = caps.llm_providers.default;
     }
+    // The model is admin-controlled: regular users see the active choice locked.
+    providerSel.disabled = !isAdmin();
 
     const backends = caps.search_backends.available.length
       ? caps.search_backends.available
@@ -673,6 +732,8 @@ const optionsMenu = $("optionsMenu");
 optionsBtn.addEventListener("click", (e) => {
   e.stopPropagation();
   const open = optionsMenu.hidden;
+  // Re-assert the model lock on every open: only admins may change the provider.
+  providerSel.disabled = !isAdmin();
   optionsMenu.hidden = !open;
   optionsBtn.setAttribute("aria-expanded", String(open));
 });
@@ -754,6 +815,19 @@ $("input").addEventListener("keydown", (e) => {
 });
 
 $("newChat").addEventListener("click", newConversation);
+
+// ----- Sidebar drawer (mobile) -----
+const closeSidebar = () => document.body.classList.remove("sidebar-open");
+$("menuBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  document.body.classList.toggle("sidebar-open");
+});
+$("sidebarBackdrop").addEventListener("click", closeSidebar);
+// Dismiss the drawer once the user picks a destination.
+convList.addEventListener("click", closeSidebar);
+$("newChat").addEventListener("click", closeSidebar);
+$("adminBtn").addEventListener("click", closeSidebar);
+
 $("convSearch").addEventListener("input", (e) => {
   convQuery = e.target.value;
   renderSidebar();
@@ -853,8 +927,53 @@ function showAdmin() {
   $("sidebar").hidden = true;
   $("pane").hidden = true;
   $("adminView").hidden = false;
+  loadSettings();
   loadUsers();
   loadUsage();
+}
+
+function adminSettingError(msg) {
+  const el = $("adminSettingError");
+  if (msg) { el.textContent = msg; el.hidden = false; }
+  else { el.hidden = true; }
+}
+
+async function loadSettings() {
+  adminSettingError("");
+  try {
+    const data = await (await adminFetch("/v1/admin/settings")).json();
+    $("regToggle").checked = !!data.registration_enabled;
+  } catch { /* adminFetch already handled 401/403 */ }
+}
+
+async function saveSettings() {
+  const enabled = $("regToggle").checked;
+  adminSettingError("");
+  try {
+    const res = await adminFetch("/v1/admin/settings", {
+      method: "PUT",
+      body: JSON.stringify({ registration_enabled: enabled }),
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    $("regToggle").checked = !!data.registration_enabled;
+    registrationEnabled = !!data.registration_enabled;
+  } catch (err) {
+    if (String(err.message) === "unauthorized" || String(err.message) === "forbidden") return;
+    $("regToggle").checked = !enabled; // revert on failure
+    adminSettingError("บันทึกการตั้งค่าไม่สำเร็จ");
+  }
+}
+
+// Admins set the global model straight from the composer's model dropdown; the
+// chosen provider becomes the locked default every other user is served.
+async function saveModelProvider(provider) {
+  try {
+    await adminFetch("/v1/admin/settings", {
+      method: "PUT",
+      body: JSON.stringify({ model_provider: provider }),
+    });
+  } catch { /* adminFetch already handled 401/403 */ }
 }
 
 function showChat() {
@@ -1083,7 +1202,23 @@ $("createUserForm").addEventListener("submit", async (e) => {
   if (ok) closeCreateUserModal();
 });
 
-// ===================== Login wiring =====================
+// ===================== Admin settings wiring =====================
+$("regToggle").addEventListener("change", saveSettings);
+// Only admins can edit the model dropdown; persist their choice as the global default.
+providerSel.addEventListener("change", () => {
+  if (isAdmin()) saveModelProvider(providerSel.value);
+});
+
+// ===================== Landing / login / register wiring =====================
+$("navLogin").addEventListener("click", () => showLogin());
+$("heroLogin").addEventListener("click", () => showLogin());
+$("navRegister").addEventListener("click", showRegister);
+$("heroRegister").addEventListener("click", showRegister);
+$("loginBack").addEventListener("click", showLanding);
+$("registerBack").addEventListener("click", showLanding);
+$("toRegister").addEventListener("click", showRegister);
+$("toLogin").addEventListener("click", () => showLogin());
+
 $("loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const username = $("loginUser").value.trim();
@@ -1098,6 +1233,34 @@ $("loginForm").addEventListener("submit", async (e) => {
     showLogin(String(err.message || err));
   } finally {
     $("loginBtn").disabled = false;
+  }
+});
+
+$("registerForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = $("registerUser").value.trim();
+  const password = $("registerPass").value;
+  $("registerError").hidden = true;
+  $("registerSuccess").hidden = true;
+  if (username.length < 3 || password.length < 6) {
+    const err = $("registerError");
+    err.textContent = "ชื่อผู้ใช้อย่างน้อย 3 ตัว และรหัสผ่านอย่างน้อย 6 ตัว";
+    err.hidden = false;
+    return;
+  }
+  $("registerBtn").disabled = true;
+  try {
+    const data = await register(username, password);
+    $("registerForm").reset();
+    const ok = $("registerSuccess");
+    ok.textContent = data.message || "สมัครสมาชิกสำเร็จ รอการอนุมัติจากผู้ดูแลระบบ";
+    ok.hidden = false;
+  } catch (err) {
+    const el = $("registerError");
+    el.textContent = String(err.message || err);
+    el.hidden = false;
+  } finally {
+    $("registerBtn").disabled = false;
   }
 });
 
@@ -1141,14 +1304,19 @@ async function init() {
   const sharedToken = new URLSearchParams(location.search).get("s");
   if (sharedToken) { await enterSharedMode(sharedToken); return; }
 
-  if (!getToken()) { showLogin(); return; }
+  if (!getToken()) {
+    await loadRegistrationFlag();
+    showLanding();
+    return;
+  }
   // Validate the stored token before showing the app.
   try {
     const res = await fetch("/auth/me", { headers: authHeader() });
-    if (!res.ok) { logout(); return; }
+    if (!res.ok) { await loadRegistrationFlag(); logout(); return; }
     const me = await res.json();
     localStorage.setItem(ROLE_KEY, me.role || "user");
   } catch {
+    await loadRegistrationFlag();
     logout();
     return;
   }

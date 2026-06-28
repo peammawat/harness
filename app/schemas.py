@@ -53,6 +53,23 @@ class LoginResponse(BaseModel):
     expires_at: int
 
 
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64)
+    password: str = Field(..., min_length=6, max_length=256)
+
+
+class RegisterResponse(BaseModel):
+    status: str = "pending"
+    message: str
+
+
+class AppSettings(BaseModel):
+    # Optional so PUT /v1/admin/settings can patch one field at a time; GET
+    # always returns concrete values.
+    registration_enabled: bool | None = None
+    model_provider: str | None = None  # global LLM provider for non-admins
+
+
 # --- Users (admin management) --------------------------------------------
 
 class UserOut(BaseModel):

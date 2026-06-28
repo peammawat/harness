@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     auth_secret: str | None = None
     # Session-token lifetime in seconds (default 7 days).
     auth_token_ttl_seconds: int = 7 * 24 * 3600
+    # Default for self-registration when the DB has no stored value. Admins flip
+    # the live setting from the admin panel (persisted in the app_settings table);
+    # this only seeds the initial state. Off by default for private deployments.
+    registration_enabled: bool = False
 
     # Defaults
     default_llm_provider: str = "anthropic"

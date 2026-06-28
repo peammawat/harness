@@ -45,7 +45,9 @@ class UserStore(ABC):
         """All users, newest first (no password hashes)."""
 
     @abstractmethod
-    async def create(self, username: str, password_hash: str, role: str) -> bool:
+    async def create(
+        self, username: str, password_hash: str, role: str, *, disabled: bool = False
+    ) -> bool:
         """Create a user; return False if the username already exists."""
 
     @abstractmethod
@@ -146,14 +148,16 @@ class SqliteUserStore(UserStore):
             for r in rows
         ]
 
-    async def create(self, username: str, password_hash: str, role: str) -> bool:
+    async def create(
+        self, username: str, password_hash: str, role: str, *, disabled: bool = False
+    ) -> bool:
         async with self._lock:
             db = self._conn()
             cur = await db.execute(
                 "INSERT OR IGNORE INTO users "
                 "(username, password_hash, role, disabled, created_at) "
-                "VALUES (?, ?, ?, 0, ?)",
-                (username, password_hash, role, time.time()),
+                "VALUES (?, ?, ?, ?, ?)",
+                (username, password_hash, role, 1 if disabled else 0, time.time()),
             )
             await db.commit()
             return cur.rowcount > 0

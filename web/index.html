@@ -4,9 +4,49 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onebix Harness</title>
-  <link rel="stylesheet" href="/style.css?v=2" />
+  <link rel="stylesheet" href="/style.css?v=5" />
 </head>
 <body>
+  <!-- Public landing page (shown to logged-out visitors) -->
+  <div id="landing" class="landing" hidden>
+    <header class="landing-nav">
+      <span class="landing-logo">Onebix Harness</span>
+      <div class="landing-nav-actions">
+        <button id="navLogin" type="button" class="btn-ghost">เข้าสู่ระบบ</button>
+        <button id="navRegister" type="button" class="btn-primary landing-cta" hidden>สมัครสมาชิก</button>
+      </div>
+    </header>
+    <main class="landing-hero">
+      <p class="landing-eyebrow">ผู้ช่วย AI พร้อมการค้นหาเว็บ</p>
+      <h1 class="landing-title">ค้นหา วิเคราะห์ และสรุปข้อมูลจากทั่วทั้งเว็บ ในที่เดียว</h1>
+      <p class="landing-subtitle">
+        แชทกับ AI หลายโมเดล ค้นเว็บแบบเรียลไทม์ โหมดวิจัยเชิงลึก แนบรูปและเอกสารได้
+        ทั้งหมดผ่านหน้าจอเดียวที่ใช้งานง่าย
+      </p>
+      <div class="landing-actions">
+        <button id="heroLogin" type="button" class="btn-primary landing-cta-lg">เข้าสู่ระบบ</button>
+        <button id="heroRegister" type="button" class="btn-secondary landing-cta-lg" hidden>สมัครสมาชิก</button>
+      </div>
+      <div class="landing-features">
+        <div class="landing-feature">
+          <span class="landing-feature-icon">🔍</span>
+          <h3>ค้นเว็บแบบเรียลไทม์</h3>
+          <p>ดึงข้อมูลล่าสุดจากหลายแหล่งพร้อมอ้างอิงที่มา</p>
+        </div>
+        <div class="landing-feature">
+          <span class="landing-feature-icon">🔬</span>
+          <h3>โหมดวิจัยเชิงลึก</h3>
+          <p>ค้นหลายรอบและสังเคราะห์คำตอบที่ครบถ้วน</p>
+        </div>
+        <div class="landing-feature">
+          <span class="landing-feature-icon">📎</span>
+          <h3>แนบรูปและเอกสาร</h3>
+          <p>วิเคราะห์รูปภาพ PDF และไฟล์เอกสารได้ทันที</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
   <!-- Login gate -->
   <div id="login" class="login-overlay" hidden>
     <form id="loginForm" class="login-card">
@@ -16,10 +56,32 @@
       <input id="loginPass" type="password" placeholder="รหัสผ่าน" autocomplete="current-password" />
       <button id="loginBtn" type="submit">เข้าสู่ระบบ</button>
       <p id="loginError" class="login-error" hidden></p>
+      <p class="login-switch" id="loginSwitch" hidden>
+        ยังไม่มีบัญชี? <button type="button" id="toRegister" class="link-btn">สมัครสมาชิก</button>
+      </p>
+      <button type="button" id="loginBack" class="link-btn login-back">← กลับหน้าแรก</button>
+    </form>
+  </div>
+
+  <!-- Registration gate -->
+  <div id="register" class="login-overlay" hidden>
+    <form id="registerForm" class="login-card">
+      <h1 class="brand">สมัครสมาชิก</h1>
+      <p class="login-sub">สร้างบัญชีใหม่เพื่อเริ่มใช้งาน</p>
+      <input id="registerUser" type="text" placeholder="ชื่อผู้ใช้ (อย่างน้อย 3 ตัวอักษร)" autocomplete="username" />
+      <input id="registerPass" type="password" placeholder="รหัสผ่าน (อย่างน้อย 6 ตัวอักษร)" autocomplete="new-password" />
+      <button id="registerBtn" type="submit">สมัครสมาชิก</button>
+      <p id="registerError" class="login-error" hidden></p>
+      <p id="registerSuccess" class="login-success" hidden></p>
+      <p class="login-switch">
+        มีบัญชีอยู่แล้ว? <button type="button" id="toLogin" class="link-btn">เข้าสู่ระบบ</button>
+      </p>
+      <button type="button" id="registerBack" class="link-btn login-back">← กลับหน้าแรก</button>
     </form>
   </div>
 
   <div id="app" hidden>
+    <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
     <aside id="sidebar">
       <button id="newChat">+ แชทใหม่</button>
       <input id="convSearch" type="search" class="conv-search" placeholder="🔍 ค้นหาแชท…"
@@ -34,6 +96,7 @@
 
     <div id="pane">
       <header>
+        <button id="menuBtn" type="button" class="menu-btn" aria-label="เมนู" title="เมนู">☰</button>
         <h1>Onebix Harness</h1>
         <button id="shareBtn" type="button" title="แชร์แชทนี้" hidden>🔗 แชร์</button>
       </header>
@@ -88,6 +151,23 @@
       <div class="admin-body">
         <section class="admin-section">
           <div class="admin-section-head">
+            <h2><span class="admin-section-icon">⚙️</span> การตั้งค่าระบบ</h2>
+          </div>
+          <div class="admin-setting-row">
+            <div class="admin-setting-info">
+              <span class="admin-setting-name">เปิดให้สมัครสมาชิกเอง</span>
+              <span class="admin-setting-desc">เมื่อเปิด ผู้ใช้ใหม่จะสมัครได้เอง โดยบัญชีจะรอการอนุมัติจากผู้ดูแลก่อนเข้าใช้งาน</span>
+            </div>
+            <label class="toggle-switch">
+              <input id="regToggle" type="checkbox" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p id="adminSettingError" class="admin-error" hidden></p>
+        </section>
+
+        <section class="admin-section">
+          <div class="admin-section-head">
             <h2><span class="admin-section-icon">👥</span> ผู้ใช้</h2>
             <div class="admin-head-actions">
               <div class="admin-search">
@@ -102,12 +182,14 @@
             </div>
           </div>
           <p id="adminUserError" class="admin-error" hidden></p>
+          <div class="table-scroll">
           <table class="admin-table">
             <thead>
               <tr><th>ชื่อผู้ใช้</th><th>บทบาท</th><th>สถานะ</th><th>สร้างเมื่อ</th><th>การจัดการ</th></tr>
             </thead>
             <tbody id="userRows"></tbody>
           </table>
+          </div>
         </section>
 
         <section class="admin-section">
@@ -115,12 +197,14 @@
             <h2><span class="admin-section-icon">📊</span> การใช้งานโทเคน</h2>
             <button id="usageRefresh" type="button" class="btn-secondary">รีเฟรช</button>
           </div>
+          <div class="table-scroll">
           <table class="admin-table">
             <thead>
               <tr><th>ผู้ใช้</th><th class="num">Input</th><th class="num">Output</th><th class="num">รวม</th><th class="num">คำขอ</th><th>ใช้ล่าสุด</th></tr>
             </thead>
             <tbody id="usageRows"></tbody>
           </table>
+          </div>
         </section>
       </div>
     </div>
@@ -190,6 +274,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>

@@ -12,10 +12,13 @@ from sse_starlette.sse import EventSourceResponse
 from app.agent.extract import extract_document_text
 from app.agent.loop import run_agent
 from app.api.deps import (
+    AuthIdentity,
     get_conversation_store,
     get_http_client,
+    get_identity,
     get_llm_registry,
     get_search_registry,
+    get_settings_store,
     get_usage_store,
     require_auth,
 )
@@ -25,9 +28,12 @@ from app.llm.registry import LLMRegistry
 from app.schemas import ChatDocument, ChatRequest, ChatResponse
 from app.search.registry import SearchRegistry
 from app.storage.base import ConversationStore
+from app.storage.settings_store import SettingsStore
 from app.storage.usage_store import UsageStore
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_auth)])
+
+MODEL_PROVIDER_KEY = "model_provider"
 
 
 async def _resolve_conversation(
@@ -100,9 +106,9 @@ def _to_messages(req: ChatRequest, settings: Settings) -> list[Message]:
     return out
 
 
-def _resolve(req: ChatRequest, llm: LLMRegistry, settings: Settings):
+def _resolve(req: ChatRequest, llm: LLMRegistry, settings: Settings, provider_name: str):
     try:
-        provider = llm.get(req.provider)
+        provider = llm.get(provider_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     backend = req.search_backend or settings.default_search_backend
@@ -112,15 +118,25 @@ def _resolve(req: ChatRequest, llm: LLMRegistry, settings: Settings):
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
-    identity: str = Depends(require_auth),
+    auth: AuthIdentity = Depends(get_identity),
     llm: LLMRegistry = Depends(get_llm_registry),
     search: SearchRegistry = Depends(get_search_registry),
     http_client: httpx.AsyncClient = Depends(get_http_client),
     store: ConversationStore | None = Depends(get_conversation_store),
     usage_store: UsageStore | None = Depends(get_usage_store),
+    settings_store: SettingsStore | None = Depends(get_settings_store),
     settings: Settings = Depends(get_settings),
 ):
-    provider, backend = _resolve(req, llm, settings)
+    identity = auth.username
+    # The active LLM provider is admin-controlled: non-admins are forced onto the
+    # global provider; only admins may override it per-request via `req.provider`.
+    global_provider = settings.default_llm_provider
+    if settings_store is not None:
+        global_provider = await settings_store.get(MODEL_PROVIDER_KEY) or global_provider
+    provider_name = (
+        (req.provider or global_provider) if auth.role == "admin" else global_provider
+    )
+    provider, backend = _resolve(req, llm, settings, provider_name)
     model = req.model or ""
 
     conversation_id = None

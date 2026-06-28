@@ -11,6 +11,7 @@ from app.config import Settings, get_settings
 from app.llm.registry import LLMRegistry
 from app.search.registry import SearchRegistry
 from app.storage.base import ConversationStore
+from app.storage.settings_store import SettingsStore
 from app.storage.usage_store import UsageStore
 from app.storage.user_store import UserStore
 
@@ -33,6 +34,10 @@ def get_user_store(request: Request) -> UserStore | None:
 
 def get_usage_store(request: Request) -> UsageStore | None:
     return getattr(request.app.state, "usage_store", None)
+
+
+def get_settings_store(request: Request) -> SettingsStore | None:
+    return getattr(request.app.state, "settings_store", None)
 
 
 def get_http_client(request: Request) -> httpx.AsyncClient:

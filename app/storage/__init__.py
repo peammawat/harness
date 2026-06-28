@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from app.storage.base import ConversationStore
+from app.storage.settings_store import SettingsStore, SqliteSettingsStore
 from app.storage.sqlite_store import SqliteConversationStore
 from app.storage.usage_store import SqliteUsageStore, UsageStore
 from app.storage.user_store import SqliteUserStore, UserRecord, UserStore
@@ -14,4 +15,6 @@ __all__ = [
     "UserRecord",
     "UsageStore",
     "SqliteUsageStore",
+    "SettingsStore",
+    "SqliteSettingsStore",
 ]
