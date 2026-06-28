@@ -42,6 +42,9 @@ every `/v1/*` route:
 Token validation is split: `verify_token` checks **signature + expiry only**;
 `resolve_token` additionally confirms the user still exists and is **not disabled** (DB,
 with config fallback), so disabling an account immediately invalidates its live tokens.
+Session tokens carry no `k` claim — `verify_token` **rejects** any token that does, so a
+purpose-scoped **password-reset token** (`create_reset_token`/`verify_reset_token`,
+claim `k:"pwreset"`, short TTL) can never be replayed as a session token, or vice-versa.
 
 - `require_auth` returns the **identity string** (`username` for tokens, the key for
   API-key auth) — unchanged contract, so routes and the storage layer are unaffected.
@@ -51,6 +54,24 @@ with config fallback), so disabling an account immediately invalidates its live 
 Either credential is accepted; auth returns 401/403 *before* the handler runs, so a bad
 credential never reaches the LLM/search. `/auth/login`, `/v1/capabilities`, `/healthz`,
 the public `/shared/*` links, and the static UI need no auth.
+
+### Self-service account + password reset (`app/api/routes/me.py`, `routes/auth.py`)
+- `/v1/me/*` (guarded by `require_auth`): a logged-in user manages **their own** account —
+  `GET /v1/me` (profile incl. `email`), `PUT /v1/me/password` (verifies the current
+  password), `PUT /v1/me/email` (regex-validated, uniqueness-checked), `PUT /v1/me/username`
+  (a **true rename**), and `GET /v1/me/quota` (daily/monthly used vs. cap, for the UI
+  progress bars; reuses `quota.resolve_limits` + `usage_since`). API-key callers have no DB
+  row, so the mutating routes 400.
+- **Username rename** re-auths with the password, then `user_store.rename` →
+  `conversation_store.rename_user` → `usage_store.rename_user` (each store re-keys its `user`
+  column), and **returns a fresh session token** — the old token embeds the old name and
+  stops resolving the instant the row is renamed.
+- **Password reset (email)** — unauthenticated `POST /auth/forgot-password {email}` looks up
+  the account (`user_store.get_by_email`) and emails a `?reset=<token>` link via
+  `app/api/mailer.py` (stdlib `smtplib`, run off-thread; gated on `settings.smtp_configured`).
+  It **always returns a generic 200** (no account enumeration) and is a no-op when SMTP is
+  unset. `POST /auth/reset-password {token, new_password}` verifies the reset token and sets
+  the new hash. SMTP + `APP_BASE_URL` + `PASSWORD_RESET_TTL_SECONDS` live in `Settings`.
 
 ### Admin panel + usage (`app/api/routes/admin.py`, `routes/usage.py`)
 - `/v1/admin/*` (guarded by `require_admin`): user CRUD — list, create (409 on dup), reset
@@ -134,25 +155,32 @@ Swapping any for Redis/Postgres = one new impl + the `lifespan` line.
   (`get_conversation_store`). `routes/chat.py` resolves/creates a conversation per request
   (continuing `conversation_id` only if owned by the caller) and persists the user message +
   assistant answer; streaming emits a leading `conversation` SSE event with the id.
-  `routes/conversations.py` serves list/get/delete + share-link endpoints.
+  `routes/conversations.py` serves list/get/delete + share-link endpoints. `rename_user`
+  re-keys a renamed user's conversations.
 - **`UserStore`** (`user_store.py`) — the `users` table (username, PBKDF2 hash, role,
-  disabled, created_at). `seed()` is idempotent (`INSERT OR IGNORE` — re-seeding never
-  overwrites a password changed in the panel). Built **unconditionally** in `lifespan` (DB
-  auth works even when chat history is off) and seeded from `AUTH_USERS`/`ADMIN_USERS`.
+  disabled, created_at, per-user token limits, `email`). `seed()` is idempotent
+  (`INSERT OR IGNORE` — re-seeding never overwrites a password changed in the panel). Built
+  **unconditionally** in `lifespan` (DB auth works even when chat history is off) and seeded
+  from `AUTH_USERS`/`ADMIN_USERS`. New columns (`email`, token limits) are added via additive
+  `ALTER TABLE` migrations in `init()`. Beyond admin CRUD it exposes `set_email`,
+  `get_by_email` (for forgot-password), and `rename` (refuses a name already taken).
 - **`UsageStore`** (`usage_store.py`) — the `usage_events` table (one row per chat request),
-  with `totals()`/`user_totals()`/`series()` (daily buckets)/`recent()` aggregations.
-  Recording is best-effort in `routes/chat.py` (a write failure never breaks a chat).
+  with `totals()`/`user_totals()`/`usage_since()`/`series()` (daily buckets)/`recent()`
+  aggregations + `rename_user`. Recording is best-effort in `routes/chat.py` (a write failure
+  never breaks a chat).
 
 ### API + app wiring (`app/api/`, `app/main.py`)
 - `main.py` `lifespan` builds the shared `httpx.AsyncClient`, both registries, and the
   conversation/user/usage stores once and stores them on `app.state`; `api/deps.py` exposes
   them as FastAPI dependencies along with the `require_auth`/`require_admin` auth dependencies.
-- Routes: `routes/auth.py` (`POST /auth/login`, `GET /auth/me`), `routes/chat.py`
+- Routes: `routes/auth.py` (`POST /auth/login`, `GET /auth/me`, `POST /auth/forgot-password`,
+  `POST /auth/reset-password`), `routes/chat.py`
   (`POST /v1/chat`, SSE via `sse-starlette`, or single JSON when `stream=false`),
   `routes/search.py` (`POST /v1/search`, single or `aggregate`),
-  `routes/conversations.py` (per-user chat history), `routes/admin.py` (`/v1/admin/*` user
-  management + usage, `require_admin`), `routes/usage.py` (`/v1/usage/me`), `routes/health.py`
-  (`GET /v1/capabilities` reports configured providers/backends, no auth).
+  `routes/conversations.py` (per-user chat history), `routes/me.py` (`/v1/me/*` self-service
+  profile/password/email/username/quota, `require_auth`), `routes/admin.py` (`/v1/admin/*`
+  user management + usage, `require_admin`), `routes/usage.py` (`/v1/usage/me`),
+  `routes/health.py` (`GET /v1/capabilities` reports configured providers/backends, no auth).
   All `/v1/*` routes require `require_auth` (Bearer token or `X-API-Key`) except capabilities.
 - The static chat UI in `web/` is mounted at `/` **last**, so `/v1/*` and `/docs` take
   precedence.

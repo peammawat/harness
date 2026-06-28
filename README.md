@@ -11,8 +11,13 @@ REST API (with API-key auth) plus a built-in chat web UI (username/password logi
 - **REST API + chat UI** — SSE-streamed `/v1/chat`, OpenAPI docs at `/docs`,
   and a zero-build static chat UI at `/`.
 - **Multi-user + admin panel** — DB-backed accounts with roles, an admin UI to
-  create/disable/delete users and reset passwords, and per-user **token-usage
+  create/disable/delete users and reset passwords, per-user **token quotas**
+  (daily + monthly caps, enforced before the LLM runs), and per-user **token-usage
   tracking** (totals + recent + daily trend) recorded automatically per request.
+- **Account self-service** — a Settings view where any user can change their
+  password, rename their account (history + usage follow the new name), set an
+  email, and watch daily/monthly **usage progress bars**, plus an email-based
+  **forgot-password** reset flow.
 
 ## Architecture
 
@@ -24,9 +29,9 @@ app/
   llm/                 LLMProvider ABC (normalized events + token usage) + anthropic/openai + registry
   agent/               web_search tool + provider-agnostic agent loop
   storage/             ConversationStore + UserStore + UsageStore (SQLite impls)
-  api/                 auth + admin dependencies + routes (chat, search, admin, usage, health)
+  api/                 auth + reset tokens + mailer + deps + routes (chat, search, me, admin, usage, health)
   main.py              FastAPI app, mounts the static UI
-web/                   static chat UI + admin panel (index.html / app.js / style.css)
+web/                   static chat UI + admin panel + account settings (index.html / app.js / style.css)
 deploy/                Dockerfile + docker-compose (app + searxng + redis)
 tests/                 pytest (fakes + mocked HTTP)
 ```
@@ -84,6 +89,33 @@ The same data is available via the API: `GET /v1/admin/users`,
 `POST /v1/admin/users`, `POST|PUT|DELETE /v1/admin/users/{name}/...`,
 `GET /v1/admin/usage` and `/usage/recent` (all admin-only), plus
 `GET /v1/usage/me` and `/usage/me/series` for a caller's own usage.
+
+### Account settings & password reset
+
+Every logged-in user gets a **Settings** view (the ⚙ button in the sidebar) to
+manage their own account, backed by the `/v1/me/*` endpoints:
+
+- `PUT /v1/me/password` — change password (verifies the current one).
+- `PUT /v1/me/email` — set the recovery email.
+- `PUT /v1/me/username` — **rename the account**; their chat history and usage are
+  re-keyed to the new name and a fresh session token is returned.
+- `GET /v1/me/quota` — daily + monthly tokens used vs. the effective cap, shown as
+  progress bars (`GET /v1/me` returns the profile).
+
+**Forgot password** is email-based and unauthenticated: `POST /auth/forgot-password`
+emails a reset link (`?reset=<token>`) and `POST /auth/reset-password` sets the new
+password. It always returns a generic success (no account enumeration) and is a no-op
+until SMTP is configured:
+
+```bash
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USERNAME=apikey
+SMTP_PASSWORD=...
+SMTP_FROM=noreply@example.com         # defaults to SMTP_USERNAME
+APP_BASE_URL=https://harness.example  # used to build the reset link
+PASSWORD_RESET_TTL_SECONDS=3600       # reset-link lifetime
+```
 
 ### Generate an API key
 
@@ -148,8 +180,10 @@ pytest
 ```
 
 Covers the agent tool-use loop, aggregate dedupe, API auth, user management /
-admin guards, and token-usage recording — all with fakes / mocked HTTP, so no
-network or API keys are needed.
+admin guards, token quotas, self-service account changes (password / email /
+username rename), the email-based password reset (with a monkeypatched mailer),
+and token-usage recording — all with fakes / mocked HTTP, so no network or API
+keys are needed.
 
 ## Notes
 
