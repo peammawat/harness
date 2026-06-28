@@ -276,6 +276,14 @@ main::-webkit-scrollbar,
   font-size: 0.85em;
   line-height: 1.5;
 }
+/* KaTeX math: let wide display equations scroll instead of overflowing the column */
+.msg.assistant .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+.msg.assistant .katex { font-size: 1.05em; }
+
 /* User: subtle right-aligned bubble */
 .msg.user {
   background: var(--user);

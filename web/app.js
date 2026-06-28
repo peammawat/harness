@@ -354,6 +354,26 @@ function renderMarkdown(src) {
     return `\n${SENT}CB${i}${SENT}\n`;
   });
 
+  // 1.5 Pull out LaTeX math spans (raw, before escaping/inline rules touch them) so
+  // KaTeX gets the original source. Code is already sentinel-ised, so these never reach
+  // into code blocks. Order matters: display ($$, \[ \]) before inline ($, \( \)), and
+  // $$ before $ so the single-$ rule can't eat a display delimiter.
+  const mathBlocks = [];
+  const pushMath = (latex, display) => {
+    const i = mathBlocks.length;
+    mathBlocks.push({ latex, display });
+    const sent = `${SENT}MJ${i}${SENT}`;
+    return display ? `\n${sent}\n` : sent;
+  };
+  text = text
+    .replace(/\$\$([\s\S]+?)\$\$/g, (_, body) => pushMath(body, true))
+    .replace(/\\\[([\s\S]+?)\\\]/g, (_, body) => pushMath(body, true))
+    .replace(/\\\(([\s\S]+?)\\\)/g, (_, body) => pushMath(body, false))
+    // Inline $...$: require non-space just inside the delimiters and no adjacent digit
+    // on the outside, so currency like "$5 and $10" or "ราคา $20" stays literal.
+    .replace(/(^|[^\d$])\$(?!\s)((?:[^$\n\\]|\\.)+?)(?<!\s)\$(?!\d)/g,
+      (_, pre, body) => pre + pushMath(body, false));
+
   text = escapeHtml(text);
 
   // 2. Inline code (its contents stay literal — already escaped above).
@@ -393,6 +413,8 @@ function renderMarkdown(src) {
   };
 
   const cbLine = new RegExp(`^${SENT}CB(\\d+)${SENT}$`);
+  // A line that is just a code or display-math placeholder: emit raw, no <p> wrapper.
+  const phLine = new RegExp(`^${SENT}(?:CB|MJ)\\d+${SENT}$`);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Headings: allow up to 3 leading spaces and a missing space after the
@@ -405,8 +427,8 @@ function renderMarkdown(src) {
     const ol = line.match(/^\s*\d+\.\s+(.*)$/);
     const isTableRow = line.includes("|") && !cbLine.test(line);
 
-    if (cbLine.test(line)) {
-      // A standalone fenced-code placeholder — emit raw, no <p> wrapper.
+    if (phLine.test(line)) {
+      // A standalone fenced-code or display-math placeholder — emit raw, no <p> wrapper.
       flush();
       out.push(line);
     } else if (isTableRow && i + 1 < lines.length && isTableSep(lines[i + 1])) {
@@ -456,9 +478,26 @@ function renderMarkdown(src) {
 
   let html = out.filter((s) => s !== "").join("\n");
 
-  // 4. Restore inline code, then fenced blocks.
+  // 4. Restore inline code, fenced blocks, then render math with KaTeX.
   html = html.replace(new RegExp(`${SENT}IC(\\d+)${SENT}`, "g"), (_, i) => inlineCodes[+i]);
   html = html.replace(new RegExp(`${SENT}CB(\\d+)${SENT}`, "g"), (_, i) => codeBlocks[+i]);
+  html = html.replace(new RegExp(`${SENT}MJ(\\d+)${SENT}`, "g"), (_, i) => {
+    const { latex, display } = mathBlocks[+i];
+    if (typeof katex !== "undefined") {
+      try {
+        return katex.renderToString(latex, {
+          displayMode: display,
+          throwOnError: false,
+          output: "html",
+        });
+      } catch (_e) {
+        // Fall through to literal source on any unexpected failure.
+      }
+    }
+    // KaTeX unavailable or errored — show the original LaTeX literally.
+    const d = display ? "$$" : "$";
+    return escapeHtml(d + latex + d);
+  });
   return html;
 
   // Inline transforms applied to already-escaped, code-extracted text.
