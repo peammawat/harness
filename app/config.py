@@ -28,6 +28,19 @@ class Settings(BaseSettings):
     auth_secret: str | None = None
     # Session-token lifetime in seconds (default 7 days).
     auth_token_ttl_seconds: int = 7 * 24 * 3600
+
+    # CORS — comma-separated list of browser origins allowed to call the API.
+    # Empty falls back to `app_base_url` plus localhost (see `cors_origin_list`).
+    cors_allowed_origins: str = ""
+
+    # Rate limiting (in-process, per client IP) for the unauthenticated,
+    # brute-force-prone auth endpoints. `0` disables a limit. Window is per minute.
+    rate_limit_login_per_min: int = 10
+    rate_limit_register_per_min: int = 5
+    rate_limit_forgot_password_per_min: int = 5
+    rate_limit_reset_password_per_min: int = 10
+    # Trust `X-Forwarded-For` for the client IP (enable only behind a known proxy).
+    trust_forwarded_for: bool = False
     # Default for self-registration when the DB has no stored value. Admins flip
     # the live setting from the admin panel (persisted in the app_settings table);
     # this only seeds the initial state. Off by default for private deployments.
@@ -150,8 +163,28 @@ class Settings(BaseSettings):
 
     @property
     def token_secret(self) -> str:
-        """Signing secret for session tokens (falls back to `api_keys`)."""
+        """Signing secret for session tokens.
+
+        Falls back to `api_keys` when `auth_secret` is unset. **Set `AUTH_SECRET`
+        explicitly in production**: with the fallback, anyone holding a server
+        API key can forge a session token for any user (main.py warns at startup).
+        """
         return self.auth_secret or self.api_keys
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Browser origins allowed by CORS. Defaults to the app's own base URL
+        plus localhost when `cors_allowed_origins` is unset."""
+        configured = [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+        if configured:
+            # De-dupe while preserving order.
+            return list(dict.fromkeys(configured))
+        defaults = [
+            self.app_base_url.rstrip("/"),
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]
+        return list(dict.fromkeys(d for d in defaults if d))
 
     @property
     def smtp_configured(self) -> bool:

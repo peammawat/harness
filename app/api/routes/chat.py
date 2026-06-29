@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,9 +35,15 @@ from app.storage.settings_store import SettingsStore
 from app.storage.usage_store import UsageStore
 from app.storage.user_store import UserStore
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_auth)])
 
 MODEL_PROVIDER_KEY = "model_provider"
+
+# Generic message returned to the client when the agent loop raises, so provider
+# errors / stack traces never leak; full detail is logged server-side.
+_GENERIC_AGENT_ERROR = "internal error while generating a response"
 
 
 async def _resolve_conversation(
@@ -181,10 +188,11 @@ async def chat(
                         "event": event["type"],
                         "data": json.dumps(event, ensure_ascii=False),
                     }
-            except Exception as exc:  # noqa: BLE001 — surface to client as an SSE error
+            except Exception:  # noqa: BLE001 — surface to client as an SSE error
+                logger.exception("agent loop failed (streaming)")
                 yield {
                     "event": "error",
-                    "data": json.dumps({"type": "error", "message": str(exc)}),
+                    "data": json.dumps({"type": "error", "message": _GENERIC_AGENT_ERROR}),
                 }
             if store is not None and conversation_id is not None and answer:
                 await store.append_message(
@@ -217,7 +225,8 @@ async def chat(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.exception("agent loop failed")
+        raise HTTPException(status_code=502, detail=_GENERIC_AGENT_ERROR) from exc
     if store is not None and conversation_id is not None and content:
         await store.append_message(identity, conversation_id, "assistant", content)
     if done_event is not None:

@@ -60,6 +60,11 @@ async def _run_fetch_url(
         headers={"User-Agent": settings.fetch_user_agent},
     )
     # Re-validate the final host (a redirect could point at an internal address).
+    # Residual risk: DNS is resolved independently at validate_url time and at
+    # connect time, so a TOCTOU/DNS-rebinding attacker controlling a domain could
+    # in principle return a public IP to the check and a private IP to the actual
+    # connect. Fully closing this needs pinning the validated IP and connecting to
+    # it directly (custom transport); accepted as a known limitation for now.
     validate_url(str(resp.url), block_private_ips=settings.fetch_block_private_ips)
     resp.raise_for_status()
 

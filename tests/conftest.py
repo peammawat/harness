@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+import pytest
+
+from app.api.ratelimit import _limiter
 from app.llm.base import (
     LLMEvent,
     LLMProvider,
@@ -14,6 +17,15 @@ from app.llm.base import (
     TurnEnd,
 )
 from app.schemas import SearchResult
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """The per-IP auth rate limiter is a process-wide singleton; clear it before
+    each test so repeated logins from the shared TestClient IP don't trip it."""
+    _limiter.reset()
+    yield
+    _limiter.reset()
 
 
 class FakeSearchRegistry:

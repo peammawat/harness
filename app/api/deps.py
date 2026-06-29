@@ -1,6 +1,7 @@
 """Shared FastAPI dependencies: auth + access to app-scoped registries."""
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 
 import httpx
@@ -55,6 +56,19 @@ class AuthIdentity:
     kind: str  # "token" | "api_key"
 
 
+def _matches_server_key(candidate: str, keys: set[str]) -> bool:
+    """Constant-time membership test against the configured server API keys.
+
+    Compares every key (no early exit on first mismatch) so response timing
+    can't be used to recover a valid key byte-by-byte.
+    """
+    match = False
+    for key in keys:
+        if hmac.compare_digest(candidate, key):
+            match = True
+    return match
+
+
 def _bearer_token(authorization: str | None) -> str | None:
     if not authorization:
         return None
@@ -93,7 +107,7 @@ async def get_identity(
             role = await _resolve_role(username, settings, user_store)
             return AuthIdentity(username=username, role=role, kind="token")
 
-    if x_api_key and x_api_key in settings.api_key_set:
+    if x_api_key and _matches_server_key(x_api_key, settings.api_key_set):
         return AuthIdentity(username=x_api_key, role="user", kind="api_key")
 
     # User-generated personal key: attributed to its owner but always role

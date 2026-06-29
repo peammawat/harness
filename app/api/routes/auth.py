@@ -19,6 +19,7 @@ from app.api.deps import (
 )
 from app.api.mailer import send_email
 from app.api.passwords import hash_password
+from app.api.ratelimit import rate_limit
 from app.config import Settings, get_settings
 from app.schemas import (
     ForgotPasswordRequest,
@@ -43,7 +44,11 @@ router = APIRouter(prefix="/auth")
 _FORGOT_MESSAGE = "หากมีบัญชีที่ผูกกับอีเมลนี้ ระบบได้ส่งลิงก์รีเซ็ตรหัสผ่านไปให้แล้ว"
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post(
+    "/login",
+    response_model=LoginResponse,
+    dependencies=[Depends(rate_limit("rate_limit_login_per_min"))],
+)
 async def login(
     req: LoginRequest,
     settings: Settings = Depends(get_settings),
@@ -68,7 +73,10 @@ async def login(
 
 
 @router.post(
-    "/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit("rate_limit_register_per_min"))],
 )
 async def register(
     req: RegisterRequest,
@@ -108,7 +116,11 @@ async def register(
     )
 
 
-@router.post("/forgot-password", response_model=GenericMessage)
+@router.post(
+    "/forgot-password",
+    response_model=GenericMessage,
+    dependencies=[Depends(rate_limit("rate_limit_forgot_password_per_min"))],
+)
 async def forgot_password(
     req: ForgotPasswordRequest,
     settings: Settings = Depends(get_settings),
@@ -142,7 +154,11 @@ async def forgot_password(
     return GenericMessage(message=_FORGOT_MESSAGE)
 
 
-@router.post("/reset-password", response_model=GenericMessage)
+@router.post(
+    "/reset-password",
+    response_model=GenericMessage,
+    dependencies=[Depends(rate_limit("rate_limit_reset_password_per_min"))],
+)
 async def reset_password(
     req: ResetPasswordRequest,
     settings: Settings = Depends(get_settings),

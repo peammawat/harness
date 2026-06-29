@@ -262,7 +262,16 @@ class SqliteUserStore(UserStore):
             await db.commit()
             return cur.rowcount > 0
 
+    # Columns the generic `_update` helper is allowed to set. Guards against a
+    # future caller passing user-controlled input as the column name (the name is
+    # interpolated into the SQL — SQLite can't parameterize identifiers).
+    _UPDATABLE_COLUMNS = frozenset(
+        {"password_hash", "role", "email", "disabled"}
+    )
+
     async def _update(self, column: str, value: object, username: str) -> bool:
+        if column not in self._UPDATABLE_COLUMNS:
+            raise ValueError(f"refusing to update non-whitelisted column: {column!r}")
         async with self._lock:
             db = self._conn()
             cur = await db.execute(
