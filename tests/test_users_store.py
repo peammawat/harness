@@ -108,6 +108,60 @@ async def test_init_migrates_legacy_users_table(tmp_path):
         await store.close()
 
 
+# --- personal API keys ----------------------------------------------------
+
+async def test_api_key_create_list_and_resolve(store):
+    await store.create("alice", "h", "user")
+    kid = await store.create_api_key("alice", "hash-aaa", "sk-harness-AbC", "laptop")
+    assert isinstance(kid, str) and kid
+
+    keys = await store.list_api_keys("alice")
+    assert len(keys) == 1
+    assert keys[0].id == kid
+    assert keys[0].name == "laptop"
+    assert keys[0].key_prefix == "sk-harness-AbC"
+    assert keys[0].last_used_at is None
+
+    # Resolving a known hash returns the owner and stamps last_used_at.
+    assert await store.resolve_api_key("hash-aaa") == "alice"
+    assert (await store.list_api_keys("alice"))[0].last_used_at is not None
+    # Unknown hash → None.
+    assert await store.resolve_api_key("nope") is None
+
+
+async def test_api_key_rejected_when_owner_disabled(store):
+    await store.create("bob", "h", "user")
+    await store.create_api_key("bob", "hash-bbb", "sk-harness-bbb", "")
+    assert await store.resolve_api_key("hash-bbb") == "bob"
+    await store.set_disabled("bob", True)
+    assert await store.resolve_api_key("hash-bbb") is None
+
+
+async def test_api_key_delete_is_owner_scoped(store):
+    await store.create("alice", "h", "user")
+    await store.create("bob", "h", "user")
+    kid = await store.create_api_key("alice", "hash-ccc", "sk-harness-ccc", "")
+    # Bob can't delete Alice's key.
+    assert await store.delete_api_key("bob", kid) is False
+    assert await store.resolve_api_key("hash-ccc") == "alice"
+    # Owner can.
+    assert await store.delete_api_key("alice", kid) is True
+    assert await store.resolve_api_key("hash-ccc") is None
+    assert await store.delete_api_key("alice", kid) is False
+
+
+async def test_api_keys_cascade_on_rename_and_delete(store):
+    await store.create("alice", "h", "user")
+    await store.create_api_key("alice", "hash-ddd", "sk-harness-ddd", "k")
+    # Rename re-keys the key to the new owner.
+    assert await store.rename("alice", "alice2") is True
+    assert await store.resolve_api_key("hash-ddd") == "alice2"
+    assert len(await store.list_api_keys("alice2")) == 1
+    # Deleting the user removes their keys.
+    assert await store.delete("alice2") is True
+    assert await store.resolve_api_key("hash-ddd") is None
+
+
 async def test_seed_is_idempotent(store):
     await store.seed([("alice", "seed-hash", "admin")])
     # A later password change...

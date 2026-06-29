@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import httpx
 from fastapi import Depends, Header, HTTPException, Request, status
 
+from app.api.api_keys import hash_api_key
 from app.api.auth import resolve_token
 from app.config import Settings, get_settings
 from app.llm.registry import LLMRegistry
@@ -94,6 +95,13 @@ async def get_identity(
 
     if x_api_key and x_api_key in settings.api_key_set:
         return AuthIdentity(username=x_api_key, role="user", kind="api_key")
+
+    # User-generated personal key: attributed to its owner but always role
+    # "user". Rejected if the owner is disabled (checked in resolve_api_key).
+    if x_api_key and user_store is not None:
+        owner = await user_store.resolve_api_key(hash_api_key(x_api_key))
+        if owner:
+            return AuthIdentity(username=owner, role="user", kind="api_key")
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

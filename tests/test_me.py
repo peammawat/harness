@@ -202,3 +202,91 @@ def test_quota_unlimited_reports_null_limit(client):
     q = client.get("/v1/me/quota", headers=_auth(alice)).json()
     assert q["daily"]["limit"] is None
     assert q["monthly"]["limit"] is None
+
+
+# --- personal API keys ----------------------------------------------------
+
+def test_api_key_create_list_use_and_revoke(client):
+    admin = _token(client, "admin", "adminpass")
+    _create_user(client, admin, "bob", "bobpass")
+    bob = _token(client, "bob", "bobpass")
+
+    # Create returns the full key once + only a prefix on the record.
+    res = client.post("/v1/me/api-keys", json={"name": "n8n"}, headers=_auth(bob))
+    assert res.status_code == 201, res.text
+    created = res.json()
+    full_key = created["key"]
+    assert full_key.startswith("sk-harness-")
+    assert created["name"] == "n8n"
+
+    # Listing never exposes the secret, only the prefix.
+    keys = client.get("/v1/me/api-keys", headers=_auth(bob)).json()
+    assert len(keys) == 1
+    assert "key" not in keys[0]
+    assert full_key.startswith(keys[0]["key_prefix"])
+    key_id = keys[0]["id"]
+
+    # The key authenticates a /v1/* call, attributed to bob.
+    res = client.post(
+        "/v1/chat",
+        json={
+            "messages": [{"role": "user", "content": "hi"}],
+            "enable_search": False,
+            "stream": False,
+        },
+        headers={"X-API-Key": full_key},
+    )
+    assert res.status_code == 200, res.text
+    usage = client.get("/v1/usage/me", headers=_auth(bob)).json()
+    assert usage["input_tokens"] + usage["output_tokens"] == 30
+
+    # Revoke → the key stops working.
+    assert client.delete(
+        f"/v1/me/api-keys/{key_id}", headers=_auth(bob)
+    ).status_code == 204
+    res = client.post(
+        "/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}], "stream": False},
+        headers={"X-API-Key": full_key},
+    )
+    assert res.status_code == 401
+
+
+def test_revoking_missing_key_404(client):
+    alice = _token(client, "alice", "alicepass")
+    assert client.delete(
+        "/v1/me/api-keys/deadbeef", headers=_auth(alice)
+    ).status_code == 404
+
+
+def test_api_key_caller_cannot_mint_keys(client):
+    admin = _token(client, "admin", "adminpass")
+    _create_user(client, admin, "bob", "bobpass")
+    bob = _token(client, "bob", "bobpass")
+    full_key = client.post(
+        "/v1/me/api-keys", json={"name": ""}, headers=_auth(bob)
+    ).json()["key"]
+    # An API-key caller has no DB row, so minting keys is rejected.
+    res = client.post("/v1/me/api-keys", json={"name": "x"}, headers={"X-API-Key": full_key})
+    assert res.status_code == 400
+
+
+def test_disabled_user_key_rejected(client):
+    admin = _token(client, "admin", "adminpass")
+    _create_user(client, admin, "bob", "bobpass")
+    bob = _token(client, "bob", "bobpass")
+    full_key = client.post(
+        "/v1/me/api-keys", json={"name": ""}, headers=_auth(bob)
+    ).json()["key"]
+    # Disable bob; his key must stop authenticating immediately.
+    assert client.put(
+        "/v1/admin/users/bob/disabled",
+        json={"disabled": True},
+        headers=_auth(admin),
+    ).status_code in (200, 204)
+    res = client.post(
+        "/v1/chat",
+        json={"messages": [{"role": "user", "content": "hi"}], "stream": False},
+        headers={"X-API-Key": full_key},
+    )
+    assert res.status_code == 401

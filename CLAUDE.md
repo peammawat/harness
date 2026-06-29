@@ -36,8 +36,12 @@ every `/v1/*` route:
   `create_token`/`verify_token`, signed with `token_secret` = `AUTH_SECRET` or fallback
   `API_KEYS`). The browser stores it and sends `Authorization: Bearer <token>`;
   `GET /auth/me` returns `{username, role}`.
-- **Programmatic** — `X-API-Key` checked against `API_KEYS` (comma-separated); always
-  role `user` (no DB row).
+- **Programmatic** — `X-API-Key` checked first against `API_KEYS` (comma-separated,
+  server-wide, no DB row) and then against **per-user keys** in the `api_keys` table
+  (`user_store.resolve_api_key`, matched by SHA-256 hash of the key — see
+  `app/api/api_keys.py`). Either way the caller is role `user`; a per-user key is
+  **attributed to its owner** (usage/quota count against that account) and is
+  **rejected if the owner is disabled** (mirrors `resolve_token` for sessions).
 
 Token validation is split: `verify_token` checks **signature + expiry only**;
 `resolve_token` additionally confirms the user still exists and is **not disabled** (DB,
@@ -62,6 +66,12 @@ the public `/shared/*` links, and the static UI need no auth.
   (a **true rename**), and `GET /v1/me/quota` (daily/monthly used vs. cap, for the UI
   progress bars; reuses `quota.resolve_limits` + `usage_since`). API-key callers have no DB
   row, so the mutating routes 400.
+- **Personal API keys** — `GET/POST/DELETE /v1/me/api-keys`: a logged-in user generates,
+  lists, and revokes their own keys. `POST` returns the full secret **once** (only the
+  `key_prefix` is stored for later display); keys are SHA-256–hashed at rest. Used via the
+  same `X-API-Key` header (see Auth → Programmatic). These routes require **web-login**
+  auth (`_require_web_user` rejects `kind != "token"`), so a key can't be used to mint or
+  revoke keys — that needs a session login.
 - **Username rename** re-auths with the password, then `user_store.rename` →
   `conversation_store.rename_user` → `usage_store.rename_user` (each store re-keys its `user`
   column), and **returns a fresh session token** — the old token embeds the old name and
@@ -163,7 +173,10 @@ Swapping any for Redis/Postgres = one new impl + the `lifespan` line.
   **unconditionally** in `lifespan` (DB auth works even when chat history is off) and seeded
   from `AUTH_USERS`/`ADMIN_USERS`. New columns (`email`, token limits) are added via additive
   `ALTER TABLE` migrations in `init()`. Beyond admin CRUD it exposes `set_email`,
-  `get_by_email` (for forgot-password), and `rename` (refuses a name already taken).
+  `get_by_email` (for forgot-password), and `rename` (refuses a name already taken). It also
+  owns the `api_keys` table (personal keys: id, owner, SHA-256 `key_hash`, `key_prefix`,
+  name, timestamps) via `create_api_key`/`list_api_keys`/`resolve_api_key`/`delete_api_key`;
+  `rename` and `delete` **cascade** to it so a user's keys follow/are removed with the account.
 - **`UsageStore`** (`usage_store.py`) — the `usage_events` table (one row per chat request),
   with `totals()`/`user_totals()`/`usage_since()`/`series()` (daily buckets)/`recent()`
   aggregations + `rename_user`. Recording is best-effort in `routes/chat.py` (a write failure

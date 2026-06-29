@@ -1252,6 +1252,32 @@ header h1 { margin-right: auto; }   /* keep the share button pinned right */
 .settings-form { max-width: 460px; }
 .settings-form .modal-actions { justify-content: flex-start; margin-top: 4px; }
 
+.settings-hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; line-height: 1.5; }
+.settings-hint code {
+  background: var(--panel-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.api-key-reveal {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+}
+.api-key-reveal-warn { color: var(--warn, #d08700); font-size: 13px; margin: 0 0 8px; }
+.api-key-reveal-row { display: flex; gap: 8px; align-items: center; }
+.api-key-reveal-row code {
+  flex: 1;
+  word-break: break-all;
+  font-size: 12px;
+  background: var(--panel);
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
 .usage-meter { margin: 0 0 16px; }
 .usage-meter-head {
   display: flex;

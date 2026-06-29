@@ -122,6 +122,23 @@ class QuotaStatus(BaseModel):
     monthly: QuotaWindow
 
 
+class ApiKeyCreate(BaseModel):
+    name: str = Field("", max_length=80)
+
+
+class ApiKeyOut(BaseModel):
+    id: str
+    name: str
+    key_prefix: str
+    created_at: float
+    last_used_at: float | None = None
+
+
+class ApiKeyCreated(ApiKeyOut):
+    # The full secret, returned only once at creation.
+    key: str
+
+
 class AppSettings(BaseModel):
     # Optional so PUT /v1/admin/settings can patch one field at a time; GET
     # always returns concrete values.

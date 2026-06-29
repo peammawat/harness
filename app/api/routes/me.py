@@ -7,8 +7,11 @@ bars. Programmatic API-key callers have no DB row, so the mutating routes 400.
 """
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.api_keys import generate_api_key, hash_api_key, key_prefix
 from app.api.auth import create_token
 from app.api.deps import (
     AuthIdentity,
@@ -22,6 +25,9 @@ from app.api.passwords import hash_password, verify_password
 from app.api.quota import resolve_limits, start_of_month, start_of_today
 from app.config import Settings, get_settings
 from app.schemas import (
+    ApiKeyCreate,
+    ApiKeyCreated,
+    ApiKeyOut,
     EmailUpdate,
     LoginResponse,
     MeProfile,
@@ -50,6 +56,16 @@ async def _require_record(user_store: UserStore | None, username: str):
     if record is None:
         raise _NO_ACCOUNT
     return record
+
+
+async def _require_web_user(
+    user_store: UserStore | None, identity: AuthIdentity
+):
+    """Like `_require_record`, but also rejects API-key callers — so a key can
+    never be used to manage (mint/revoke) keys; that needs a web login."""
+    if identity.kind != "token":
+        raise _NO_ACCOUNT
+    return await _require_record(user_store, identity.username)
 
 
 @router.get("", response_model=MeProfile)
@@ -167,3 +183,62 @@ async def my_quota(
         daily=QuotaWindow(used=daily_used, limit=daily_limit),
         monthly=QuotaWindow(used=monthly_used, limit=monthly_limit),
     )
+
+
+# --- Personal API keys ----------------------------------------------------
+
+
+@router.get("/api-keys", response_model=list[ApiKeyOut])
+async def list_api_keys(
+    identity: AuthIdentity = Depends(get_identity),
+    user_store: UserStore | None = Depends(get_user_store),
+) -> list[ApiKeyOut]:
+    await _require_web_user(user_store, identity)
+    keys = await user_store.list_api_keys(identity.username)
+    return [
+        ApiKeyOut(
+            id=k.id,
+            name=k.name,
+            key_prefix=k.key_prefix,
+            created_at=k.created_at,
+            last_used_at=k.last_used_at,
+        )
+        for k in keys
+    ]
+
+
+@router.post("/api-keys", response_model=ApiKeyCreated, status_code=status.HTTP_201_CREATED)
+async def create_api_key(
+    req: ApiKeyCreate,
+    identity: AuthIdentity = Depends(get_identity),
+    user_store: UserStore | None = Depends(get_user_store),
+) -> ApiKeyCreated:
+    """Generate a key and return it once — only the prefix is stored for display."""
+    await _require_web_user(user_store, identity)
+    name = req.name.strip()
+    key = generate_api_key()
+    prefix = key_prefix(key)
+    key_id = await user_store.create_api_key(
+        identity.username, hash_api_key(key), prefix, name
+    )
+    return ApiKeyCreated(
+        id=key_id,
+        name=name,
+        key_prefix=prefix,
+        created_at=time.time(),
+        last_used_at=None,
+        key=key,
+    )
+
+
+@router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    key_id: str,
+    identity: AuthIdentity = Depends(get_identity),
+    user_store: UserStore | None = Depends(get_user_store),
+) -> None:
+    await _require_web_user(user_store, identity)
+    if not await user_store.delete_api_key(identity.username, key_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="ไม่พบ API key นี้"
+        )

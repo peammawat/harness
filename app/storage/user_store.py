@@ -9,6 +9,7 @@ scale-out — nothing else changes.
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -30,6 +31,19 @@ class UserRecord:
     daily_token_limit: int | None = None
     monthly_token_limit: int | None = None
     email: str | None = None
+
+
+@dataclass
+class ApiKeyRecord:
+    """A user-generated API key. The secret hash is never exposed; only the
+    short `key_prefix` is shown after creation."""
+
+    id: str
+    username: str
+    key_prefix: str
+    name: str
+    created_at: float
+    last_used_at: float | None = None
 
 
 class UserStore(ABC):
@@ -91,6 +105,31 @@ class UserStore(ABC):
     async def seed(self, entries: list[tuple[str, str, str]]) -> None:
         """Insert (username, password_hash, role) rows, skipping existing ones."""
 
+    # --- Personal API keys -------------------------------------------------
+
+    @abstractmethod
+    async def create_api_key(
+        self, username: str, key_hash: str, key_prefix: str, name: str
+    ) -> str:
+        """Store a new key for `username`; return the generated key id."""
+
+    @abstractmethod
+    async def list_api_keys(self, username: str) -> list[ApiKeyRecord]:
+        """A user's keys, newest first (no secrets)."""
+
+    @abstractmethod
+    async def resolve_api_key(self, key_hash: str) -> str | None:
+        """Return the owner's username for an active key, else None.
+
+        Only matches when the owning user exists and is not disabled, so
+        disabling an account immediately invalidates its keys. Best-effort
+        updates the key's `last_used_at`.
+        """
+
+    @abstractmethod
+    async def delete_api_key(self, username: str, key_id: str) -> bool:
+        """Revoke one of `username`'s keys; False if not found/owned."""
+
     @abstractmethod
     async def close(self) -> None: ...
 
@@ -130,6 +169,23 @@ class SqliteUserStore(UserStore):
                 )
         if "email" not in cols:
             await self._db.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        # User-generated API keys (one row per key, hash-only at rest).
+        await self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                key_prefix TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                created_at REAL NOT NULL,
+                last_used_at REAL
+            )
+            """
+        )
+        await self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_api_keys_username ON api_keys(username)"
+        )
         await self._db.commit()
 
     def _conn(self) -> aiosqlite.Connection:
@@ -249,6 +305,9 @@ class SqliteUserStore(UserStore):
             cur = await db.execute(
                 "UPDATE users SET username = ? WHERE username = ?", (new, old)
             )
+            await db.execute(
+                "UPDATE api_keys SET username = ? WHERE username = ?", (new, old)
+            )
             await db.commit()
             return cur.rowcount > 0
 
@@ -274,6 +333,9 @@ class SqliteUserStore(UserStore):
             cur = await db.execute(
                 "DELETE FROM users WHERE username = ?", (username,)
             )
+            await db.execute(
+                "DELETE FROM api_keys WHERE username = ?", (username,)
+            )
             await db.commit()
             return cur.rowcount > 0
 
@@ -290,6 +352,71 @@ class SqliteUserStore(UserStore):
                 [(u, h, r, now) for u, h, r in entries],
             )
             await db.commit()
+
+    async def create_api_key(
+        self, username: str, key_hash: str, key_prefix: str, name: str
+    ) -> str:
+        key_id = secrets.token_hex(8)
+        async with self._lock:
+            db = self._conn()
+            await db.execute(
+                "INSERT INTO api_keys "
+                "(id, username, key_hash, key_prefix, name, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (key_id, username, key_hash, key_prefix, name, time.time()),
+            )
+            await db.commit()
+        return key_id
+
+    async def list_api_keys(self, username: str) -> list[ApiKeyRecord]:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "SELECT id, username, key_prefix, name, created_at, last_used_at "
+                "FROM api_keys WHERE username = ? ORDER BY created_at DESC",
+                (username,),
+            )
+            rows = await cur.fetchall()
+        return [
+            ApiKeyRecord(
+                id=r["id"],
+                username=r["username"],
+                key_prefix=r["key_prefix"],
+                name=r["name"],
+                created_at=r["created_at"],
+                last_used_at=r["last_used_at"],
+            )
+            for r in rows
+        ]
+
+    async def resolve_api_key(self, key_hash: str) -> str | None:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "SELECT k.username FROM api_keys k JOIN users u "
+                "ON u.username = k.username "
+                "WHERE k.key_hash = ? AND u.disabled = 0",
+                (key_hash,),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            await db.execute(
+                "UPDATE api_keys SET last_used_at = ? WHERE key_hash = ?",
+                (time.time(), key_hash),
+            )
+            await db.commit()
+        return row["username"]
+
+    async def delete_api_key(self, username: str, key_id: str) -> bool:
+        async with self._lock:
+            db = self._conn()
+            cur = await db.execute(
+                "DELETE FROM api_keys WHERE id = ? AND username = ?",
+                (key_id, username),
+            )
+            await db.commit()
+            return cur.rowcount > 0
 
     async def close(self) -> None:
         if self._db is not None:

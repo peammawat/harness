@@ -119,12 +119,22 @@ PASSWORD_RESET_TTL_SECONDS=3600       # reset-link lifetime
 
 ### Generate an API key
 
+There are two kinds of API key, both sent via the `X-API-Key` header:
+
+**Server-wide keys** — set in env, shared, anonymous (always role `user`):
+
 ```bash
 python -c "import secrets; print('sk-harness-'+secrets.token_urlsafe(32))"
 ```
 
-Put it in `API_KEYS` (comma-separated for multiple) and send it as the
-`X-API-Key` header.
+Put it in `API_KEYS` (comma-separated for multiple).
+
+**Personal keys** — any logged-in user can mint their own from **Account
+settings → API Keys**. They're attributed to that user (usage and quota count
+against their account), can be named and revoked individually, and the full
+secret is shown only once at creation (only a short prefix is stored afterwards).
+Disabling the user immediately invalidates all of their keys. Manage them via
+`GET/POST/DELETE /v1/me/api-keys`.
 
 ## API
 

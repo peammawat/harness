@@ -1086,6 +1086,7 @@ function showSettings() {
   $("settingsView").hidden = false;
   loadProfile();
   loadQuota();
+  loadApiKeys();
 }
 
 function settingsError(id, msg) {
@@ -1237,6 +1238,76 @@ async function changePassword() {
   $("passwordForm").reset();
   $("passwordSuccess").textContent = "เปลี่ยนรหัสผ่านเรียบร้อยแล้ว";
   $("passwordSuccess").hidden = false;
+}
+
+// ===================== Personal API keys =====================
+
+async function loadApiKeys() {
+  settingsError("apiKeyError", "");
+  let keys;
+  try {
+    keys = await (await adminFetch("/v1/me/api-keys")).json();
+  } catch { return; /* adminFetch handled 401 */ }
+  const rows = $("apiKeyRows");
+  rows.innerHTML = "";
+  $("apiKeyEmpty").hidden = keys.length > 0;
+  for (const k of keys) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td>${escapeHtml(k.name || "—")}</td>` +
+      `<td><code>${escapeHtml(k.key_prefix)}…</code></td>` +
+      `<td>${fmtTime(k.created_at)}</td>` +
+      `<td>${fmtTime(k.last_used_at)}</td>` +
+      `<td class="admin-actions"></td>`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-danger";
+    btn.textContent = "เพิกถอน";
+    btn.addEventListener("click", () => revokeApiKey(k.id));
+    tr.lastElementChild.appendChild(btn);
+    rows.appendChild(tr);
+  }
+}
+
+async function createApiKey() {
+  settingsError("apiKeyError", "");
+  const name = (prompt("ตั้งชื่อ API key (ไม่บังคับ) เช่น 'n8n', 'เซิร์ฟเวอร์ของฉัน'") ?? "").trim();
+  try {
+    const res = await adminFetch("/v1/me/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok) {
+      let d = "สร้าง API key ไม่สำเร็จ";
+      try { d = (await res.json()).detail || d; } catch {}
+      settingsError("apiKeyError", d);
+      return;
+    }
+    const data = await res.json();
+    $("apiKeyRevealValue").textContent = data.key;
+    $("apiKeyReveal").hidden = false;
+  } catch (err) {
+    if (String(err.message) === "unauthorized") return;
+    settingsError("apiKeyError", "สร้าง API key ไม่สำเร็จ");
+    return;
+  }
+  await loadApiKeys();
+}
+
+async function revokeApiKey(id) {
+  if (!confirm("เพิกถอน API key นี้? แอปที่ใช้คีย์นี้จะใช้งานไม่ได้ทันที")) return;
+  try {
+    const res = await adminFetch(`/v1/me/api-keys/${id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 204) {
+      settingsError("apiKeyError", "เพิกถอน API key ไม่สำเร็จ");
+      return;
+    }
+  } catch (err) {
+    if (String(err.message) === "unauthorized") return;
+    settingsError("apiKeyError", "เพิกถอน API key ไม่สำเร็จ");
+    return;
+  }
+  await loadApiKeys();
 }
 
 async function submitForgot(email) {
@@ -1473,6 +1544,13 @@ $("quotaRefresh").addEventListener("click", loadQuota);
 $("profileUsername").addEventListener("input", onUsernameInput);
 $("profileForm").addEventListener("submit", (e) => { e.preventDefault(); saveProfile(); });
 $("passwordForm").addEventListener("submit", (e) => { e.preventDefault(); changePassword(); });
+$("apiKeyCreateBtn").addEventListener("click", createApiKey);
+$("apiKeyCopyBtn").addEventListener("click", () => {
+  navigator.clipboard.writeText($("apiKeyRevealValue").textContent).then(() => {
+    $("apiKeyCopyBtn").textContent = "คัดลอกแล้ว ✓";
+    setTimeout(() => { $("apiKeyCopyBtn").textContent = "คัดลอก"; }, 1500);
+  });
+});
 function openCreateUserModal() {
   $("newUserName").value = "";
   $("newUserPass").value = "";

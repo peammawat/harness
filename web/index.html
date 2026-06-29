@@ -336,6 +336,38 @@
             </div>
           </form>
         </section>
+
+        <section class="admin-section">
+          <div class="admin-section-head">
+            <h2><span class="admin-section-icon">🗝️</span> API Keys</h2>
+            <button id="apiKeyCreateBtn" type="button" class="btn-secondary">สร้างคีย์ใหม่</button>
+          </div>
+          <p class="settings-hint">
+            สร้าง API key เพื่อเรียกใช้งาน API จากแพลตฟอร์มอื่นผ่านเฮดเดอร์
+            <code>X-API-Key</code> การใช้งานจะถูกนับรวมกับบัญชีของคุณ
+          </p>
+          <p id="apiKeyError" class="admin-error" hidden></p>
+          <div id="apiKeyReveal" class="api-key-reveal" hidden>
+            <p class="api-key-reveal-warn">⚠️ คัดลอกคีย์นี้ไว้ทันที — ระบบจะแสดงให้เห็นเพียงครั้งเดียวเท่านั้น</p>
+            <div class="api-key-reveal-row">
+              <code id="apiKeyRevealValue"></code>
+              <button id="apiKeyCopyBtn" type="button" class="btn-secondary">คัดลอก</button>
+            </div>
+          </div>
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>ชื่อ</th>
+                <th>คีย์</th>
+                <th>สร้างเมื่อ</th>
+                <th>ใช้ล่าสุด</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="apiKeyRows"></tbody>
+          </table>
+          <p id="apiKeyEmpty" class="settings-hint" hidden>ยังไม่มี API key</p>
+        </section>
       </div>
     </div>
   </div>
